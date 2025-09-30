@@ -16,7 +16,6 @@
 .idea/
 .vscode/
 *.iml
-
 # Android
 android/local.properties
 android/**/gradle-wrapper.jar
