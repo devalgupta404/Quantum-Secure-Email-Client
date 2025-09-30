@@ -1,3 +1,61 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# Build outputs
+/build/
+/temp_build/
+
+# Native assets cache
+/build/native_assets/
+
+# IDE/Editor
+.idea/
+.vscode/
+*.iml
+
+# Android
+android/local.properties
+android/**/gradle-wrapper.jar
+
+# iOS
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/ephemeral/
+ios/Pods/
+
+# macOS
+macos/Flutter/Flutter-Generated.xcconfig
+macos/Flutter/flutter_export_environment.sh
+macos/Flutter/ephemeral/
+macos/Pods/
+
+# Windows/Linux (generated/ephemeral)
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+
+# Web (generated at build)
+web/flutter.js
+web/flutter_service_worker.js
+web/canvaskit/
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+
+# Xcode user data
+**/*.xccheckout
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Misc
+.DS_Store
+Thumbs.db
 # Miscellaneous
 *.class
 *.log
