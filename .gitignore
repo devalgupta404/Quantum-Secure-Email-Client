@@ -1,2 +1,4 @@
 /quantum-secure-email-client
 *.env
+
+temp_build/
