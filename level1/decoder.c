@@ -4,7 +4,7 @@
 
 //otp.h
 
-int one_time_pad_decoder(FILE* key_file, FILE* cipher_file, FILE* output_file){
+int one_time_pad_decoder(FILE* key_file, FILE* cipher_file, FILE* output){
 
     // We need to take the key_file adn the cipher_file and take their XOR again to get the output
 
@@ -19,9 +19,15 @@ int one_time_pad_decoder(FILE* key_file, FILE* cipher_file, FILE* output_file){
             return 1;
         }
 
+        
 
 
-        fputc(((unsigned char)c) ^ ((unsigned char)k), output_file);
+        unsigned char out = ((unsigned char)c) ^ ((unsigned char)k);
+
+        if(fputc(out, output) == EOF){
+            perror("putc(output)");
+            return 1;
+        }
     }
 
     return 0;
