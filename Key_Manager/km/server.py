@@ -40,8 +40,12 @@ def get_key_by_id(key_id):
     key_hex = KEY_STORE.get(key_id)
     if not key_hex:
         return "Not found", 404
+    
+    # FIXED: Return raw bytes instead of JSON
     key_bytes = bytes.fromhex(key_hex)
-    return Response(key_bytes, mimetype = "application/octet-stream")
+    response = make_response(key_bytes)
+    response.headers["Content-Type"] = "application/octet-stream"
+    return response
 
 
 
