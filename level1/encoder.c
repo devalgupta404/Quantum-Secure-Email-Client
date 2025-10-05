@@ -15,7 +15,7 @@ int one_time_pad(FILE* input, FILE* key_file, FILE* cipher_file){
             return 1;
         }
         
-
+    
         unsigned char out = ((unsigned char)c) ^ ((unsigned char)k);
 
         if(fputc(out, cipher_file) == EOF){

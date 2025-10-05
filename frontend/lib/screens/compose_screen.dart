@@ -1,92 +1,295 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../app.dart';
 import '../widgets/app_scaffold.dart';
+import '../services/email_service.dart';
+import '../providers/auth_provider.dart';
 
-class ComposeScreen extends StatelessWidget {
+class ComposeScreen extends StatefulWidget {
   const ComposeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final TextEditingController toController = TextEditingController();
-    final TextEditingController subjectController = TextEditingController();
-    final TextEditingController bodyController = TextEditingController();
+  State<ComposeScreen> createState() => _ComposeScreenState();
+}
 
-    return AppScaffold(
-      title: 'Compose',
-      currentIndex: 1,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            TextField(
-              controller: toController,
-              decoration: const InputDecoration(
-                labelText: 'To',
-                prefixIcon: Icon(Icons.alternate_email),
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: subjectController,
-              decoration: const InputDecoration(
-                labelText: 'Subject',
-                prefixIcon: Icon(Icons.subject),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'Security Level'),
-                    value: 'otp',
-                    items: const <DropdownMenuItem<String>>[
-                      DropdownMenuItem(value: 'otp', child: Text('🔒 Quantum Secure (OTP)')),
-                      DropdownMenuItem(value: 'qaes', child: Text('🔐 Quantum-AES (Coming Soon)'), enabled: false),
-                    ],
-                    onChanged: (_) {},
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.attach_file),
-                  label: const Text('Attach'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: TextField(
-                controller: bodyController,
-                decoration: const InputDecoration(
-                  labelText: 'Message',
-                  alignLabelWithHint: true,
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Send (stub)')),
-                  );
-                },
-                icon: const Icon(Icons.send),
-                label: const Text('Send Quantum Secure'),
-              ),
-            ),
-          ],
-        ),
+class _ComposeScreenState extends State<ComposeScreen> {
+  final TextEditingController _toController = TextEditingController();
+  final TextEditingController _subjectController = TextEditingController();
+  final TextEditingController _bodyController = TextEditingController();
+  final EmailService _emailService = EmailService();
+  final _formKey = GlobalKey<FormState>();
+  bool _isLoading = false;
+  bool _isValidatingRecipient = false;
+  bool _recipientExists = false;
+
+  @override
+  void dispose() {
+    _toController.dispose();
+    _subjectController.dispose();
+    _bodyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _validateRecipient() async {
+    if (_toController.text.trim().isEmpty) {
+      _showMessage('Please enter recipient email', isError: true);
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.user?.email == _toController.text.trim()) {
+      _showMessage('❌ You cannot send emails to yourself', isError: true);
+      setState(() {
+        _recipientExists = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isValidatingRecipient = true;
+      _recipientExists = false;
+    });
+
+    try {
+      final exists = await _emailService.validateUser(_toController.text.trim());
+      setState(() {
+        _recipientExists = exists;
+      });
+
+      if (exists) {
+        _showMessage('✅ User found in our system!', isError: false);
+      } else {
+        _showMessage('❌ User not found. They need to sign up first.', isError: true);
+      }
+    } catch (e) {
+      _showMessage('Error validating user: ${e.toString()}', isError: true);
+    } finally {
+      setState(() => _isValidatingRecipient = false);
+    }
+  }
+
+  Future<void> _sendEmail() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    if (!_recipientExists) {
+      _showMessage('Please validate recipient first', isError: true);
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.user == null) {
+      _showMessage('Please login first', isError: true);
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final success = await _emailService.sendEmail(
+        senderEmail: authProvider.user!.email,
+        recipientEmail: _toController.text.trim(),
+        subject: _subjectController.text.trim(),
+        body: _bodyController.text.trim(),
+      );
+
+      if (success) {
+        _showMessage('📧 Email sent successfully!', isError: false);
+        _clearForm();
+        // Navigate to Sent screen after successful send
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false);
+          }
+        });
+      } else {
+        _showMessage('Failed to send email', isError: true);
+      }
+    } catch (e) {
+      _showMessage('Error: ${e.toString()}', isError: true);
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _showMessage(String message, {required bool isError}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
       ),
     );
   }
-}
 
+  void _clearForm() {
+    _toController.clear();
+    _subjectController.clear();
+    _bodyController.clear();
+    setState(() {
+      _recipientExists = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, child) {
+        return AppScaffold(
+          title: 'Compose',
+          currentIndex: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  // From field (read-only, shows current user)
+                  TextField(
+                    decoration: InputDecoration(
+                      labelText: 'From',
+                      prefixIcon: const Icon(Icons.person),
+                      hintText: authProvider.user?.email ?? 'Not logged in',
+                    ),
+                    enabled: false,
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // To field with validation
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _toController,
+                          decoration: InputDecoration(
+                            labelText: 'To',
+                            prefixIcon: const Icon(Icons.email_outlined),
+                            suffixIcon: _recipientExists 
+                                ? const Icon(Icons.check_circle, color: Colors.green)
+                                : _toController.text.isNotEmpty 
+                                    ? const Icon(Icons.error, color: Colors.red)
+                                    : null,
+                          ),
+                          keyboardType: TextInputType.emailAddress,
+                          enabled: !_isLoading && !_isValidatingRecipient,
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Please enter recipient email';
+                            }
+                            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
+                              return 'Please enter a valid email';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: (_isLoading || _isValidatingRecipient) ? null : _validateRecipient,
+                        icon: _isValidatingRecipient
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.check_circle_outline),
+                        label: const Text('Check'),
+                      ),
+                    ],
+                  ),
+                  
+                  // Recipient validation message
+                  if (_toController.text.isNotEmpty && !_recipientExists)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'User not found. They need to sign up first.',
+                              style: TextStyle(
+                                color: Colors.orange.shade700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Subject field
+                  TextFormField(
+                    controller: _subjectController,
+                    decoration: const InputDecoration(
+                      labelText: 'Subject',
+                      prefixIcon: Icon(Icons.subject),
+                    ),
+                    enabled: !_isLoading,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter a subject';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Message body
+                  Expanded(
+                    child: TextFormField(
+                      controller: _bodyController,
+                      decoration: const InputDecoration(
+                        labelText: 'Message',
+                        prefixIcon: Icon(Icons.message_outlined),
+                        alignLabelWithHint: true,
+                      ),
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      enabled: !_isLoading,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter a message';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Send button
+                  ElevatedButton.icon(
+                    onPressed: (_isLoading || !_recipientExists) ? null : _sendEmail,
+                    icon: _isLoading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send),
+                    label: Text(_isLoading ? 'Sending...' : 'Send Email'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

@@ -46,12 +46,15 @@ public class SMTPCryptoWrapper : IDisposable
             
             // Generate key ID for this email
             var keyId = GenerateKeyId(message);
+            _logger.LogInformation("Generated KeyId: {KeyId}", keyId);
             
             // Encrypt the email content
             var encryptedContent = await EncryptEmailContentAsync(message, keyId);
+            _logger.LogInformation("Encrypted content created successfully");
             
             // Create MIME message
             var mimeMessage = await CreateMimeMessageAsync(message, encryptedContent, credentials.Email);
+            _logger.LogInformation("MIME message created successfully");
             
             // Send via SMTP
             await SendViaSmtpAsync(mimeMessage, credentials, cancellationToken);
@@ -61,8 +64,124 @@ public class SMTPCryptoWrapper : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send encrypted email");
+            _logger.LogError(ex, "Failed to send encrypted email: {Error}", ex.Message);
+            _logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
             throw;
+        }
+    }
+    
+    /// <summary>
+    /// Decrypts email content using the one-time pad engine
+    /// </summary>
+    /// <param name="encryptedContent">Base64 encoded encrypted content</param>
+    /// <param name="keyId">The key ID used for encryption</param>
+    /// <returns>Decrypted email content</returns>
+    public async Task<string> DecryptEmailContentAsync(string encryptedContent, string keyId)
+    {
+        try
+        {
+            _logger.LogInformation("Decrypting email content with KeyId: {KeyId}", keyId);
+            
+            // Convert base64 encrypted content back to bytes
+            var encryptedBytes = Convert.FromBase64String(encryptedContent);
+            
+            // For now, we'll use the MockQuantumKeyManager to get the same key
+            // In a real implementation, you'd need a secure key exchange mechanism
+            var quantumKey = await _keyManager.GetKeyAsync(keyId, encryptedBytes.Length);
+            
+            // Decrypt using one-time pad
+            var decryptedBytes = _cryptoEngine.Decrypt(encryptedBytes, quantumKey.Data.Take(encryptedBytes.Length).ToArray());
+            
+            // Convert back to string
+            var decryptedContent = System.Text.Encoding.UTF8.GetString(decryptedBytes);
+            
+            _logger.LogInformation("Successfully decrypted email content");
+            return decryptedContent;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt email content");
+            throw;
+        }
+    }
+    
+    private async Task<MimeMessage> CreateSimpleMimeMessageAsync(EmailMessage message, string fromEmail)
+    {
+        var mimeMessage = new MimeMessage();
+        
+        // Set from
+        mimeMessage.From.Add(new MailboxAddress(fromEmail, fromEmail));
+        
+        // Set recipients
+        foreach (var to in message.To)
+        {
+            mimeMessage.To.Add(new MailboxAddress(to, to));
+        }
+        
+        foreach (var cc in message.Cc)
+        {
+            mimeMessage.Cc.Add(new MailboxAddress(cc, cc));
+        }
+        
+        foreach (var bcc in message.Bcc)
+        {
+            mimeMessage.Bcc.Add(new MailboxAddress(bcc, bcc));
+        }
+        
+        // Set subject
+        mimeMessage.Subject = message.Subject;
+        
+        // Set simple body (no encryption for testing)
+        mimeMessage.Body = new TextPart(TextFormat.Plain)
+        {
+            Text = $"This is a test email from QuMail.\n\nOriginal message: {message.Body}\n\n(This email was sent without encryption for testing purposes.)"
+        };
+        
+        return mimeMessage;
+    }
+    
+    /// <summary>
+    /// Validates email credentials by attempting to connect and authenticate with the SMTP server.
+    /// </summary>
+    /// <param name="credentials">The credentials to validate</param>
+    /// <returns>True if credentials are valid, false otherwise</returns>
+    public async Task<bool> ValidateCredentialsAsync(EmailAccountCredentials credentials)
+    {
+        // Get provider settings
+        if (!_providerSettings.Providers.TryGetValue(credentials.Provider, out var provider))
+        {
+            return false;
+        }
+        
+        using var client = new SmtpClient();
+        
+        try
+        {
+            // Connect to SMTP server
+            await client.ConnectAsync(
+                provider.Smtp.Host, 
+                provider.Smtp.Port, 
+                provider.Smtp.EnableSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
+            
+            // Attempt to authenticate
+            if (provider.Smtp.AuthType == AuthenticationType.OAuth2 && !string.IsNullOrEmpty(credentials.OAuth2Token))
+            {
+                var oauth2 = new SaslMechanismOAuth2(credentials.Email, credentials.OAuth2Token);
+                await client.AuthenticateAsync(oauth2);
+            }
+            else
+            {
+                await client.AuthenticateAsync(credentials.Email, credentials.Password);
+            }
+            
+            // If we get here, authentication succeeded
+            await client.DisconnectAsync(true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Credential validation failed for {Email}", credentials.Email);
+            return false;
         }
     }
     

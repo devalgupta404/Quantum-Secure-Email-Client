@@ -5,14 +5,14 @@ import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart';
 
-class InboxScreen extends StatefulWidget {
-  const InboxScreen({super.key});
+class SentScreen extends StatefulWidget {
+  const SentScreen({super.key});
 
   @override
-  State<InboxScreen> createState() => _InboxScreenState();
+  State<SentScreen> createState() => _SentScreenState();
 }
 
-class _InboxScreenState extends State<InboxScreen> {
+class _SentScreenState extends State<SentScreen> {
   final EmailService _emailService = EmailService();
   List<Email> _emails = [];
   bool _isLoading = false;
@@ -30,44 +30,16 @@ class _InboxScreenState extends State<InboxScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final emails = await _emailService.getInbox(authProvider.user!.email);
+      final emails = await _emailService.getSentEmails(authProvider.user!.email);
       setState(() => _emails = emails);
     } catch (e) {
-      print('Error loading emails: $e');
+      print('Error loading sent emails: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _markAsRead(Email email) async {
-    if (email.isRead) return;
-
-    try {
-      final success = await _emailService.markAsRead(email.id);
-      if (success) {
-        setState(() {
-          final index = _emails.indexWhere((e) => e.id == email.id);
-          if (index != -1) {
-            _emails[index] = Email(
-              id: email.id,
-              senderEmail: email.senderEmail,
-              recipientEmail: email.recipientEmail,
-              subject: email.subject,
-              body: email.body,
-              sentAt: email.sentAt,
-              isRead: true,
-            );
-          }
-        });
-      }
-    } catch (e) {
-      print('Error marking email as read: $e');
-    }
-  }
-
   void _showEmailDetails(Email email) {
-    _markAsRead(email);
-    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -78,7 +50,7 @@ class _InboxScreenState extends State<InboxScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'From: ${email.senderEmail}',
+                'To: ${email.recipientEmail}',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
@@ -123,17 +95,16 @@ class _InboxScreenState extends State<InboxScreen> {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
         return AppScaffold(
-          title: 'Inbox',
-          currentIndex: 0,
+          title: 'Sent',
+          currentIndex: 1,
           child: Column(
             children: [
-              // Header with refresh button
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
                     Text(
-                      'Welcome, ${authProvider.user?.name ?? 'User'}!',
+                      'Sent Emails',
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -149,7 +120,6 @@ class _InboxScreenState extends State<InboxScreen> {
                 ),
               ),
               
-              // Email list or empty state
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
@@ -161,13 +131,13 @@ class _InboxScreenState extends State<InboxScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   const Icon(
-                                    Icons.inbox_outlined,
+                                    Icons.send_outlined,
                                     size: 64,
                                     color: Colors.grey,
                                   ),
                                   const SizedBox(height: 16),
                                   const Text(
-                                    'No messages yet',
+                                    'No sent emails yet',
                                     style: TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.w600,
@@ -175,7 +145,7 @@ class _InboxScreenState extends State<InboxScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   const Text(
-                                    'Send your first email to get started!',
+                                    'Start sending emails to see them here!',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(color: Colors.grey),
                                   ),
@@ -204,29 +174,23 @@ class _InboxScreenState extends State<InboxScreen> {
                                   ),
                                   child: ListTile(
                                     leading: CircleAvatar(
-                                      backgroundColor: email.isRead 
-                                          ? Colors.grey.shade300 
-                                          : Colors.blue,
+                                      backgroundColor: Colors.green.shade100,
                                       child: Icon(
-                                        Icons.person,
-                                        color: email.isRead 
-                                            ? Colors.grey.shade600 
-                                            : Colors.white,
+                                        Icons.send,
+                                        color: Colors.green.shade700,
                                       ),
                                     ),
                                     title: Text(
                                       email.subject,
-                                      style: TextStyle(
-                                        fontWeight: email.isRead 
-                                            ? FontWeight.normal 
-                                            : FontWeight.bold,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     subtitle: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'From: ${email.senderEmail}',
+                                          'To: ${email.recipientEmail}',
                                           style: TextStyle(
                                             fontSize: 12,
                                             color: Colors.grey.shade600,
@@ -236,31 +200,17 @@ class _InboxScreenState extends State<InboxScreen> {
                                           _getPreview(email.body),
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: Colors.grey.shade700,
+                                            color: Colors.grey.shade800,
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                    trailing: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
+                                        const SizedBox(height: 4),
                                         Text(
                                           _formatDate(email.sentAt),
                                           style: TextStyle(
-                                            fontSize: 10,
+                                            fontSize: 11,
                                             color: Colors.grey.shade500,
                                           ),
                                         ),
-                                        if (!email.isRead)
-                                          Container(
-                                            margin: const EdgeInsets.only(top: 4),
-                                            width: 8,
-                                            height: 8,
-                                            decoration: const BoxDecoration(
-                                              color: Colors.blue,
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
                                       ],
                                     ),
                                     onTap: () => _showEmailDetails(email),

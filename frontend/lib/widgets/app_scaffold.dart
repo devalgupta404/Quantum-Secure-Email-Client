@@ -20,9 +20,12 @@ class AppScaffold extends StatelessWidget {
         Navigator.of(context).pushNamedAndRemoveUntil(Routes.inbox, (r) => false);
         break;
       case 1:
-        Navigator.of(context).pushNamed(Routes.compose);
+        Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (r) => false);
         break;
       case 2:
+        Navigator.of(context).pushNamed(Routes.compose);
+        break;
+      case 3:
         Navigator.of(context).pushNamed(Routes.settings);
         break;
     }
@@ -40,6 +43,7 @@ class AppScaffold extends StatelessWidget {
         onDestinationSelected: (i) => _onNavTap(context, i),
         destinations: const <NavigationDestination>[
           NavigationDestination(icon: Icon(Icons.inbox_outlined), selectedIcon: Icon(Icons.inbox), label: 'Inbox'),
+          NavigationDestination(icon: Icon(Icons.send_outlined), selectedIcon: Icon(Icons.send), label: 'Sent'),
           NavigationDestination(icon: Icon(Icons.edit_outlined), selectedIcon: Icon(Icons.edit), label: 'Compose'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],

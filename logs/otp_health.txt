@@ -1,0 +1,7 @@
+OTP encrypt FAILED: The remote server returned an error: (502) Bad Gateway.
+OTP encrypt FAILED: Unable to connect to the remote server
+OTP encrypt FAILED: Unable to connect to the remote server
+OTP encrypt FAILED: Unable to connect to the remote server
+OTP encrypt FAILED: Unable to connect to the remote server
+OTP encrypt FAILED: Unable to connect to the remote server
+OTP encrypt OK
