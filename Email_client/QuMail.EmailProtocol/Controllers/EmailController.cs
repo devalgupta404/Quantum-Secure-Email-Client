@@ -7,6 +7,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Mail;
+using System.Net;
+using QuMail.EmailProtocol.Configuration;
 
 namespace QuMail.EmailProtocol.Controllers;
 
@@ -31,8 +34,8 @@ public class EmailController : ControllerBase
     {
         try
         {
-            // Check if recipient exists
-            var recipient = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.RecipientEmail);
+            // Check if recipient exists by primary app email or mapped external email
+            var recipient = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.RecipientEmail || u.ExternalEmail == request.RecipientEmail);
             if (recipient == null)
             {
                 return BadRequest(new { 
@@ -50,7 +53,7 @@ public class EmailController : ControllerBase
             {
                 Id = Guid.NewGuid(),
                 SenderEmail = request.SenderEmail,
-                RecipientEmail = request.RecipientEmail,
+                RecipientEmail = recipient.Email, // normalize to internal app email
                 Subject = subjectEnvelope,
                 Body = bodyEnvelope,
                 SentAt = DateTime.UtcNow,
@@ -59,6 +62,9 @@ public class EmailController : ControllerBase
 
             _context.Emails.Add(email);
             await _context.SaveChangesAsync();
+
+            // External SMTP delivery (automatic when recipient has configuration)
+            await TrySendExternallyAsync(request, recipient, subjectEnvelope, bodyEnvelope);
 
             return Ok(new { 
                 success = true, 
@@ -297,6 +303,59 @@ public class EmailController : ControllerBase
         return s;
     }
 
+    private async Task TrySendExternallyAsync(SendEmailRequest request, User recipient, string subjectEnvelope, string bodyEnvelope)
+    {
+        try
+        {
+            // Determine provider and credentials
+            var providerKey = !string.IsNullOrWhiteSpace(recipient.EmailProvider) ? recipient.EmailProvider : "gmail";
+            EmailProvider provider;
+            if (!EmailProviderDefaults.DefaultProviders.TryGetValue(providerKey, out provider))
+            {
+                provider = EmailProviderDefaults.DefaultProviders["gmail"]; // fallback
+            }
+
+            var smtp = provider.Smtp;
+
+            // Resolve external recipient address
+            var externalRecipient = !string.IsNullOrWhiteSpace(recipient.ExternalEmail) ? recipient.ExternalEmail! : recipient.Email;
+
+            // Resolve auth secret: prefer stored encrypted app password for SENDER
+            var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
+            string? smtpPassword = null;
+            string? senderExternalEmail = null;
+            if (sender != null && !string.IsNullOrWhiteSpace(sender.AppPasswordHash))
+            {
+                try { smtpPassword = QuMail.EmailProtocol.Services.SecretProtector.Decrypt(sender.AppPasswordHash); } catch { smtpPassword = null; }
+                senderExternalEmail = sender.ExternalEmail;
+            }
+            if (string.IsNullOrWhiteSpace(smtpPassword) || string.IsNullOrWhiteSpace(senderExternalEmail)) return; // cannot send externally without credentials
+
+            using var client = new SmtpClient(smtp.Host, smtp.Port)
+            {
+                EnableSsl = smtp.EnableSsl,
+                DeliveryMethod = SmtpDeliveryMethod.Network,
+                UseDefaultCredentials = false,
+                Credentials = new NetworkCredential(senderExternalEmail, smtpPassword)
+            };
+
+            // Build external message: keep body as encrypted envelope JSON to avoid leaking plaintext
+            var mail = new MailMessage
+            {
+                From = new MailAddress(senderExternalEmail), // Use sender's external email
+                Subject = subjectEnvelope,
+                Body = bodyEnvelope,
+                IsBodyHtml = false
+            };
+            mail.To.Add(new MailAddress(externalRecipient));
+
+            await client.SendMailAsync(mail);
+        }
+        catch
+        {
+            // Fail quietly for external delivery so app send succeeds
+        }
+    }
     [HttpPost("validate-user")]
     public async Task<IActionResult> ValidateUser([FromBody] ValidateUserRequest request)
     {

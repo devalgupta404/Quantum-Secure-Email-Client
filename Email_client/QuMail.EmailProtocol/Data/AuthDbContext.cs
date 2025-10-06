@@ -23,10 +23,17 @@ public class AuthDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Email).IsUnique();
+            entity.HasIndex(e => e.Username).IsUnique();
+            entity.HasIndex(e => e.ExternalEmail);
             entity.Property(e => e.Email).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Username).IsRequired().HasMaxLength(255);
             entity.Property(e => e.PasswordHash).IsRequired().HasMaxLength(255);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(255);
             entity.Property(e => e.AvatarUrl).HasMaxLength(500);
+            entity.Property(e => e.ExternalEmail).HasMaxLength(255);
+            entity.Property(e => e.EmailProvider).HasMaxLength(50);
+            entity.Property(e => e.AppPasswordHash).HasMaxLength(255);
+            entity.Property(e => e.OAuth2Token).HasMaxLength(2048);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
         });

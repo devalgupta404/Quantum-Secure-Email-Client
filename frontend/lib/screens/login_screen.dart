@@ -110,7 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 const Text("Don't have an account? "),
                 TextButton(
-                  onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SignupScreen())),
+                  onPressed: () => Navigator.pushReplacementNamed(context, '/signup'),
                   child: const Text('Sign Up'),
                 ),
               ]),
@@ -135,7 +135,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      await authProvider.login(_emailController.text.trim(), _passwordController.text);
+      final success = await authProvider.login(_emailController.text.trim(), _passwordController.text);
+      
+      if (success && mounted) {
+        // Navigate to inbox after successful login
+        Navigator.pushReplacementNamed(context, '/inbox');
+      }
     }
   }
 }

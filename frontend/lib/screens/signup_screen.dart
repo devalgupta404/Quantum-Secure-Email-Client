@@ -17,6 +17,10 @@ class _SignupScreenState extends State<SignupScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _usernameController = TextEditingController();
+  final _externalEmailController = TextEditingController();
+  final _appPasswordController = TextEditingController();
+  String? _emailProvider;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
 
@@ -26,6 +30,9 @@ class _SignupScreenState extends State<SignupScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _usernameController.dispose();
+    _externalEmailController.dispose();
+    _appPasswordController.dispose();
     super.dispose();
   }
 
@@ -159,6 +166,72 @@ class _SignupScreenState extends State<SignupScreen> {
                 return null;
               },
             ),
+            const SizedBox(height: 16),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: const Text('Optional: Link external email for SMTP delivery'),
+              children: [
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _usernameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Preferred Username (optional)',
+                    prefixIcon: Icon(Icons.alternate_email_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _externalEmailController,
+                  decoration: const InputDecoration(
+                    labelText: 'External Email (e.g., your Gmail)',
+                    prefixIcon: Icon(Icons.email_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _emailProvider,
+                  decoration: const InputDecoration(
+                    labelText: 'Email Provider',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'gmail', child: Text('Gmail')),
+                    DropdownMenuItem(value: 'yahoo', child: Text('Yahoo')),
+                    DropdownMenuItem(value: 'outlook', child: Text('Outlook')),
+                  ],
+                  onChanged: (v) => setState(() => _emailProvider = v),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _appPasswordController,
+                  decoration: const InputDecoration(
+                    labelText: 'App Password (16 chars)',
+                    prefixIcon: Icon(Icons.key_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLength: 16,
+                  obscureText: true,
+                  validator: (value) {
+                    if (value != null && value.isNotEmpty) {
+                      if (value.length != 16) {
+                        return 'App password must be exactly 16 characters';
+                      }
+                      // Gmail/Yahoo app passwords can contain letters, numbers, and some special chars
+                      // Remove spaces for validation but allow them in the input
+                      var cleanValue = value.replaceAll(' ', '');
+                      if (cleanValue.length != 16) {
+                        return 'App password must be exactly 16 characters (excluding spaces)';
+                      }
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
             const SizedBox(height: 24),
             Consumer<AuthProvider>(
               builder: (context, authProvider, child) {
@@ -208,12 +281,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 const Text("Already have an account? "),
                 TextButton(
                   onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const LoginScreen(),
-                      ),
-                    );
+                    Navigator.pushReplacementNamed(context, '/login');
                   },
                   child: const Text('Sign In'),
                 ),
@@ -258,10 +326,15 @@ class _SignupScreenState extends State<SignupScreen> {
         _emailController.text.trim(),
         _passwordController.text,
         _nameController.text.trim(),
+        username: _usernameController.text.trim().isEmpty ? null : _usernameController.text.trim(),
+        externalEmail: _externalEmailController.text.trim().isEmpty ? null : _externalEmailController.text.trim(),
+        emailProvider: _emailProvider,
+        appPassword: _appPasswordController.text.trim().isEmpty ? null : _appPasswordController.text.trim(),
       );
 
       if (success && mounted) {
-        // Navigation will be handled by the main app based on auth state
+        // Navigate to login screen after successful registration
+        Navigator.pushReplacementNamed(context, '/login');
       }
     }
   }

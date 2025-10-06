@@ -7,8 +7,28 @@ using System.Text;
 using Microsoft.OpenApi.Models;
 using DotNetEnv;
 
-// Load environment variables from .env file
-Env.Load();
+// Load environment variables from a .env file by searching upwards for repo root
+try
+{
+    static string? FindEnvFile()
+    {
+        var dir = Directory.GetCurrentDirectory();
+        for (int i = 0; i < 6 && !string.IsNullOrEmpty(dir); i++)
+        {
+            var envPath = Path.Combine(dir, ".env");
+            if (File.Exists(envPath)) return envPath;
+            dir = Directory.GetParent(dir)?.FullName ?? string.Empty;
+        }
+        return null;
+    }
+
+    var envFile = FindEnvFile();
+    if (!string.IsNullOrEmpty(envFile))
+    {
+        Env.Load(envFile);
+    }
+}
+catch { /* non-fatal */ }
 
 var builder = WebApplication.CreateBuilder(args);
 
