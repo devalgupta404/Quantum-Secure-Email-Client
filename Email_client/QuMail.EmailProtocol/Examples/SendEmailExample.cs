@@ -10,8 +10,8 @@ public class SendEmailExample
 {
     public static async Task RunExample()
     {
-        // Setup mock implementations
-        var cryptoEngine = new MockOneTimePadEngine();
+        // Setup real implementations
+        var cryptoEngine = new Level1OneTimePadEngine();
         var keyManager = new MockQuantumKeyManager();
         var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         var logger = loggerFactory.CreateLogger<SMTPCryptoWrapper>();

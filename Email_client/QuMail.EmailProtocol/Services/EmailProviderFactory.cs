@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using QuMail.EmailProtocol.Configuration;
 using QuMail.EmailProtocol.Interfaces;
+using QuMail.EmailProtocol.Mocks;
 
 namespace QuMail.EmailProtocol.Services;
 
@@ -36,5 +37,17 @@ public class EmailProviderFactory : IEmailProviderFactory
     {
         var logger = _loggerFactory.CreateLogger<SMTPCryptoWrapper>();
         return new SMTPCryptoWrapper(_cryptoEngine, _keyManager, logger, _settings);
+    }
+    
+    /// <summary>
+    /// Creates an email factory with the real Level1 OTP engine by default.
+    /// </summary>
+    public static EmailProviderFactory CreateWithLevel1OTP(ILoggerFactory? loggerFactory = null)
+    {
+        var cryptoEngine = new Level1OneTimePadEngine();
+        var keyManager = new MockQuantumKeyManager();
+        var logger = loggerFactory ?? LoggerFactory.Create(builder => builder.AddConsole());
+        
+        return new EmailProviderFactory(cryptoEngine, keyManager, logger);
     }
 }
