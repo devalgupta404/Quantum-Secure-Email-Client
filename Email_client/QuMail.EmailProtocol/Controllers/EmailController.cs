@@ -41,7 +41,8 @@ public class EmailController : ControllerBase
                 });
             }
 
-            // Encrypt body via OTP API (store envelope JSON in Body to avoid schema changes)
+            // Encrypt subject and body via OTP API (store envelope JSON to avoid schema changes)
+            var subjectEnvelope = await EncryptBodyAsync(request.Subject);
             var bodyEnvelope = await EncryptBodyAsync(request.Body);
 
             // Create email record
@@ -50,7 +51,7 @@ public class EmailController : ControllerBase
                 Id = Guid.NewGuid(),
                 SenderEmail = request.SenderEmail,
                 RecipientEmail = request.RecipientEmail,
-                Subject = request.Subject,
+                Subject = subjectEnvelope,
                 Body = bodyEnvelope,
                 SentAt = DateTime.UtcNow,
                 IsRead = false
@@ -90,12 +91,13 @@ public class EmailController : ControllerBase
             foreach (var e in emailEntities)
             {
                 var decryptedBody = await TryDecryptBodyAsync(e.Body);
+                var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
                 emails.Add(new
                 {
                     e.Id,
                     e.SenderEmail,
                     e.RecipientEmail,
-                    e.Subject,
+                    Subject = decryptedSubject,
                     Body = decryptedBody,
                     e.SentAt,
                     e.IsRead
@@ -130,12 +132,13 @@ public class EmailController : ControllerBase
             foreach (var e in emailEntities)
             {
                 var decryptedBody = await TryDecryptBodyAsync(e.Body);
+                var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
                 emails.Add(new
                 {
                     e.Id,
                     e.SenderEmail,
                     e.RecipientEmail,
-                    e.Subject,
+                    Subject = decryptedSubject,
                     Body = decryptedBody,
                     e.SentAt,
                     e.IsRead
