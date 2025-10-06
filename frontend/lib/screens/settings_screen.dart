@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../widgets/app_scaffold.dart';
+import '../widgets/inbox_shell.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart';
 
@@ -9,14 +9,14 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-        return AppScaffold(
-          title: 'Settings',
-          currentIndex: 3,
-      child: Consumer<AuthProvider>(builder: (context, authProvider, child) => ListView(
+    final isWide = MediaQuery.of(context).size.width >= 1000;
+
+    Widget settingsList(AuthProvider authProvider) {
+      return ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
-            elevation: 2,
+            elevation: 0,
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(children: [
@@ -28,7 +28,7 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 16),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(authProvider.user?.name ?? 'User', style: Theme.of(context).textTheme.headlineSmall),
+                  Text(authProvider.user?.name ?? 'User', style: Theme.of(context).textTheme.titleLarge),
                   Text(authProvider.user?.email ?? 'user@example.com', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
                 ])),
               ]),
@@ -47,7 +47,46 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _showLogoutDialog(context, authProvider),
           )),
         ],
-      )),
+      );
+    }
+
+    if (!isWide) {
+      return Consumer<AuthProvider>(
+        builder: (context, authProvider, child) => MobileScaffoldShell(
+          title: 'Settings',
+          body: settingsList(authProvider),
+        ),
+      );
+    }
+
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, child) => Scaffold(
+        body: Column(
+          children: [
+            InboxTopBar(trailing: [
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: () => Navigator.pushNamed(context, Routes.settings),
+                icon: const Icon(Icons.settings_outlined),
+              ),
+            ]),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const InboxSidebar(active: 'settings'),
+                  Expanded(
+                    child: Container(
+                      color: Colors.white,
+                      child: settingsList(authProvider),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
