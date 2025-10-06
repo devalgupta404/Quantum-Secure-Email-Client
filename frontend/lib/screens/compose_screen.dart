@@ -172,7 +172,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                       if (value == null || value.trim().isEmpty) {
                         return 'Please enter recipient email';
                       }
-                      if (!RegExp(r'^[\\w\\.-]+@([\\w-]+\\.)+[A-Za-z]{2,}$').hasMatch(value.trim())) {
+                      if (!RegExp(r'^[\w\.-]+@([\w-]+\.)+[A-Za-z]{2,}$').hasMatch(value.trim())) {
                         return 'Please enter a valid email';
                       }
                       return null;
