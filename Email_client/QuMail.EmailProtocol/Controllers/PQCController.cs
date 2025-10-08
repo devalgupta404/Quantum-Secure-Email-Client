@@ -368,15 +368,6 @@ public class PQCDecryptRequest
     public string PrivateKey { get; set; } = string.Empty;
 }
 
-public class SendPQCEmailRequest
-{
-    public string SenderEmail { get; set; } = string.Empty;
-    public string RecipientEmail { get; set; } = string.Empty;
-    public string RecipientPublicKey { get; set; } = string.Empty;
-    public string Subject { get; set; } = string.Empty;
-    public string Body { get; set; } = string.Empty;
-}
-
 public class ValidateKeyRequest
 {
     public string PublicKey { get; set; } = string.Empty;
@@ -385,12 +376,4 @@ public class ValidateKeyRequest
 public class PQCTestRequest
 {
     public string? Message { get; set; }
-}
-
-public class PQCEmailEnvelope
-{
-    public string EncryptedBody { get; set; } = string.Empty;
-    public string PQCCiphertext { get; set; } = string.Empty;
-    public string Algorithm { get; set; } = string.Empty;
-    public string KeyId { get; set; } = string.Empty;
 }

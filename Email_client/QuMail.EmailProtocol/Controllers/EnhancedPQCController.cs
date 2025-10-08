@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using QuMail.EmailProtocol.Services;
+using QuMail.EmailProtocol.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace QuMail.EmailProtocol.Controllers;
 
@@ -14,13 +16,16 @@ public class EnhancedPQCController : ControllerBase
 {
     private readonly Level3EnhancedPQC _enhancedPQC;
     private readonly Level3HybridEncryption _hybridEncryption;
+    private readonly AuthDbContext _context;
 
     public EnhancedPQCController(
         Level3EnhancedPQC enhancedPQC,
-        Level3HybridEncryption hybridEncryption)
+        Level3HybridEncryption hybridEncryption,
+        AuthDbContext context)
     {
         _enhancedPQC = enhancedPQC ?? throw new ArgumentNullException(nameof(enhancedPQC));
         _hybridEncryption = hybridEncryption ?? throw new ArgumentNullException(nameof(hybridEncryption));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
     /// <summary>
@@ -243,6 +248,156 @@ public class EnhancedPQCController : ControllerBase
     }
 
     /// <summary>
+    /// Send email with double-layer PQC encryption (Kyber-512 + OTP)
+    /// POST /api/pqc/v2/send-double-layer
+    /// Recommended for: Standard secure communication
+    /// </summary>
+    [HttpPost("send-double-layer")]
+    public async Task<IActionResult> SendDoubleLayerEmail([FromBody] SendPQCEmailRequest request)
+    {
+        try
+        {
+            // Validate recipient exists
+            var recipient = await _context.Users
+                .FirstOrDefaultAsync(u => u.Email == request.RecipientEmail);
+
+            if (recipient == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Recipient email not found in our system"
+                });
+            }
+
+            // Encrypt with Kyber-512 + OTP (double-layer)
+            var encrypted = _hybridEncryption.Encrypt(
+                request.Body,
+                request.RecipientPublicKey,
+                Level3EnhancedPQC.SecurityLevel.Kyber512,
+                useAES: false);
+
+            // Create envelope with PQC data
+            var pqcEnvelope = new PQCEmailEnvelope
+            {
+                EncryptedBody = encrypted.EncryptedBody,
+                PQCCiphertext = encrypted.PQCCiphertext,
+                Algorithm = encrypted.Algorithm,
+                SecurityLevel = encrypted.SecurityLevel,
+                UseAES = encrypted.UseAES,
+                KeyId = encrypted.KeyId
+            };
+
+            // Store in database (Body field contains the JSON envelope)
+            var email = new QuMail.EmailProtocol.Models.Email
+            {
+                Id = Guid.NewGuid(),
+                SenderEmail = request.SenderEmail,
+                RecipientEmail = request.RecipientEmail,
+                Subject = request.Subject,
+                Body = System.Text.Json.JsonSerializer.Serialize(pqcEnvelope),
+                SentAt = DateTime.UtcNow,
+                IsRead = false
+            };
+
+            _context.Emails.Add(email);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = "Email sent with double-layer PQC encryption (Kyber-512 + OTP)",
+                emailId = email.Id,
+                algorithm = encrypted.Algorithm,
+                layers = "PQC + OTP"
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                message = $"Failed to send PQC email: {ex.Message}"
+            });
+        }
+    }
+
+    /// <summary>
+    /// Send email with triple-layer PQC encryption (Kyber-1024 + AES-256 + OTP)
+    /// POST /api/pqc/v2/send-triple-layer
+    /// Recommended for: Maximum security communication
+    /// </summary>
+    [HttpPost("send-triple-layer")]
+    public async Task<IActionResult> SendTripleLayerEmail([FromBody] SendPQCEmailRequest request)
+    {
+        try
+        {
+            // Validate recipient exists
+            var recipient = await _context.Users
+                .FirstOrDefaultAsync(u => u.Email == request.RecipientEmail);
+
+            if (recipient == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Recipient email not found in our system"
+                });
+            }
+
+            // Encrypt with Kyber-1024 + AES-256 + OTP (triple-layer)
+            var encrypted = _hybridEncryption.Encrypt(
+                request.Body,
+                request.RecipientPublicKey,
+                Level3EnhancedPQC.SecurityLevel.Kyber1024,
+                useAES: true);
+
+            // Create envelope with PQC data
+            var pqcEnvelope = new PQCEmailEnvelope
+            {
+                EncryptedBody = encrypted.EncryptedBody,
+                PQCCiphertext = encrypted.PQCCiphertext,
+                Algorithm = encrypted.Algorithm,
+                SecurityLevel = encrypted.SecurityLevel,
+                UseAES = encrypted.UseAES,
+                KeyId = encrypted.KeyId
+            };
+
+            // Store in database (Body field contains the JSON envelope)
+            var email = new QuMail.EmailProtocol.Models.Email
+            {
+                Id = Guid.NewGuid(),
+                SenderEmail = request.SenderEmail,
+                RecipientEmail = request.RecipientEmail,
+                Subject = request.Subject,
+                Body = System.Text.Json.JsonSerializer.Serialize(pqcEnvelope),
+                SentAt = DateTime.UtcNow,
+                IsRead = false
+            };
+
+            _context.Emails.Add(email);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = "Email sent with triple-layer PQC encryption (Kyber-1024 + AES-256 + OTP)",
+                emailId = email.Id,
+                algorithm = encrypted.Algorithm,
+                layers = "PQC + AES-256-GCM + OTP"
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                message = $"Failed to send PQC email: {ex.Message}"
+            });
+        }
+    }
+
+    /// <summary>
     /// Test all security levels
     /// POST /api/pqc/v2/test-all
     /// </summary>
@@ -333,4 +488,23 @@ public class EnhancedDecryptRequest
 public class TestRequest
 {
     public string? Message { get; set; }
+}
+
+public class SendPQCEmailRequest
+{
+    public string SenderEmail { get; set; } = string.Empty;
+    public string RecipientEmail { get; set; } = string.Empty;
+    public string RecipientPublicKey { get; set; } = string.Empty;
+    public string Subject { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+}
+
+public class PQCEmailEnvelope
+{
+    public string EncryptedBody { get; set; } = string.Empty;
+    public string PQCCiphertext { get; set; } = string.Empty;
+    public string Algorithm { get; set; } = string.Empty;
+    public string SecurityLevel { get; set; } = string.Empty;
+    public bool UseAES { get; set; }
+    public string KeyId { get; set; } = string.Empty;
 }
