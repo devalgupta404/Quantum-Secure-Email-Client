@@ -55,11 +55,12 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> register(String email, String password, String name) async {
+  Future<bool> register(String email, String password, String name, {String? username, String? externalEmail, String? emailProvider, String? appPassword}) async {
     _setStatus(AuthStatus.loading);
     _clearError();
     try {
-      final authResponse = await _authService.register(email, password, name);
+      final authResponse = await _authService.register(email, password, name,
+          username: username, externalEmail: externalEmail, emailProvider: emailProvider, appPassword: appPassword);
       _user = authResponse.user;
       _setStatus(AuthStatus.authenticated);
       return true;

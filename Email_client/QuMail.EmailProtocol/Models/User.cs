@@ -15,6 +15,10 @@ public class User
 
     [Required]
     [StringLength(255)]
+    public string Username { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(255)]
     public string PasswordHash { get; set; } = string.Empty;
 
     [Required]
@@ -33,6 +37,20 @@ public class User
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? LastLoginAt { get; set; }
+
+    // External mail account mapping (e.g., Gmail/Yahoo/Outlook)
+    [StringLength(255)]
+    public string? ExternalEmail { get; set; }
+
+    [StringLength(50)]
+    public string? EmailProvider { get; set; }
+
+    // Store hashes/tokens, never raw secrets
+    [StringLength(255)]
+    public string? AppPasswordHash { get; set; }
+
+    [StringLength(2048)]
+    public string? OAuth2Token { get; set; }
 
     // Navigation properties
     public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();

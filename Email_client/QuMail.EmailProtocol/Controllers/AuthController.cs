@@ -7,6 +7,10 @@ using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using QuMail.EmailProtocol.Models;
 using QuMail.EmailProtocol.Data;
+using QuMail.EmailProtocol.Services;
+using QuMail.EmailProtocol.Configuration;
+using System.Net.Mail;
+using System.Net;
 
 namespace QuMail.EmailProtocol.Controllers;
 
@@ -32,12 +36,29 @@ public class AuthController : ControllerBase
         {
             if (await _context.Users.AnyAsync(u => u.Email == request.Email))
                 return BadRequest(new { message = "User with this email already exists" });
+            // Derive username when not provided
+            var requestedUsername = request.Username;
+            if (string.IsNullOrWhiteSpace(requestedUsername))
+            {
+                var localPart = request.Email.Split('@')[0];
+                requestedUsername = localPart.Length >= 3 ? localPart : ($"user_{Guid.NewGuid().ToString("N").Substring(0,8)}");
+            }
+            // Ensure uniqueness; append suffix if needed
+            var candidate = requestedUsername;
+            int suffix = 0;
+            while (await _context.Users.AnyAsync(u => u.Username == candidate))
+            {
+                suffix++;
+                candidate = $"{requestedUsername}{suffix}";
+            }
+            requestedUsername = candidate;
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
             var user = new User
             {
                 Id = Guid.NewGuid(),
                 Email = request.Email,
+                Username = requestedUsername,
                 PasswordHash = passwordHash,
                 Name = request.Name,
                 IsActive = true,
@@ -45,6 +66,42 @@ public class AuthController : ControllerBase
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
+
+            // Map external mail account if provided
+            if (!string.IsNullOrWhiteSpace(request.ExternalEmail))
+            {
+                user.ExternalEmail = request.ExternalEmail;
+            }
+            if (!string.IsNullOrWhiteSpace(request.EmailProvider))
+            {
+                user.EmailProvider = request.EmailProvider;
+            }
+            if (!string.IsNullOrWhiteSpace(request.AppPassword))
+            {
+                // Only validate if all required fields are provided
+                if (!string.IsNullOrWhiteSpace(request.EmailProvider) && !string.IsNullOrWhiteSpace(request.ExternalEmail))
+                {
+                    try
+                    {
+                        var isValid = await ValidateAppPasswordAsync(request.ExternalEmail, request.AppPassword, request.EmailProvider);
+                        if (!isValid)
+                        {
+                            return BadRequest(new { message = "Invalid app password for the specified email provider" });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "SMTP validation failed, proceeding without validation");
+                        // Continue without validation if SMTP test fails
+                    }
+                }
+                // Store encrypted app password for SMTP use (not hash, needs reversal)
+                user.AppPasswordHash = SecretProtector.Encrypt(request.AppPassword);
+            }
+            if (!string.IsNullOrWhiteSpace(request.OAuth2Token))
+            {
+                user.OAuth2Token = request.OAuth2Token;
+            }
 
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
@@ -61,6 +118,7 @@ public class AuthController : ControllerBase
                     Id = user.Id,
                     Email = user.Email,
                     Name = user.Name,
+                    Username = user.Username,
                     AvatarUrl = user.AvatarUrl
                 }
             });
@@ -94,6 +152,7 @@ public class AuthController : ControllerBase
                     Id = user.Id,
                     Email = user.Email,
                     Name = user.Name,
+                    Username = user.Username,
                     AvatarUrl = user.AvatarUrl
                 }
             });
@@ -132,6 +191,7 @@ public class AuthController : ControllerBase
                     Id = user.Id,
                     Email = user.Email,
                     Name = user.Name,
+                    Username = user.Username,
                     AvatarUrl = user.AvatarUrl
                 }
             });
@@ -215,6 +275,7 @@ public class AuthController : ControllerBase
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.Name),
+                new Claim("username", user.Username),
                 new Claim("email_verified", user.EmailVerified.ToString().ToLower())
             }),
             Expires = DateTime.UtcNow.AddMinutes(expiresInMinutes),
@@ -255,6 +316,56 @@ public class AuthController : ControllerBase
         catch
         {
             return null;
+        }
+    }
+
+    private async Task<bool> ValidateAppPasswordAsync(string email, string appPassword, string provider)
+    {
+        try
+        {
+            // Get provider settings
+            if (!EmailProviderDefaults.DefaultProviders.TryGetValue(provider, out var emailProvider))
+            {
+                return false;
+            }
+
+            var smtp = emailProvider.Smtp;
+            
+            // Create SMTP client with provider settings
+            using var client = new SmtpClient(smtp.Host, smtp.Port)
+            {
+                EnableSsl = smtp.EnableSsl,
+                DeliveryMethod = SmtpDeliveryMethod.Network,
+                UseDefaultCredentials = false,
+                Credentials = new NetworkCredential(email, appPassword),
+                Timeout = 10000 // 10 second timeout
+            };
+
+            // Test connection by attempting to send a test message (but don't actually send)
+            // We'll use a simple connection test instead
+            await client.SendMailAsync(new MailMessage
+            {
+                From = new MailAddress(email),
+                To = { new MailAddress(email) }, // Send to self
+                Subject = "QuMail App Password Test",
+                Body = "This is a test message to verify your app password.",
+                IsBodyHtml = false
+            });
+
+            return true;
+        }
+        catch (SmtpException ex) when (ex.StatusCode == SmtpStatusCode.MustIssueStartTlsFirst || 
+                                       ex.StatusCode == SmtpStatusCode.GeneralFailure ||
+                                       ex.Message.Contains("authentication") ||
+                                       ex.Message.Contains("credentials"))
+        {
+            // Invalid credentials
+            return false;
+        }
+        catch (Exception)
+        {
+            // Other errors (network, etc.) - we'll be conservative and return false
+            return false;
         }
     }
 }

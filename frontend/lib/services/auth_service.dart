@@ -31,9 +31,17 @@ class AuthService {
     }
   }
 
-  Future<AuthResponse> register(String email, String password, String name) async {
+  Future<AuthResponse> register(String email, String password, String name, {String? username, String? externalEmail, String? emailProvider, String? appPassword}) async {
     try {
-      final request = RegisterRequest(email: email, password: password, name: name);
+      final request = RegisterRequest(
+        email: email,
+        password: password,
+        name: name,
+        username: username,
+        externalEmail: externalEmail,
+        emailProvider: emailProvider,
+        appPassword: appPassword,
+      );
       final response = await http.post(
         Uri.parse('$_baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../widgets/app_scaffold.dart';
+import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart';
@@ -94,18 +94,18 @@ class _SentScreenState extends State<SentScreen> {
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
-        return AppScaffold(
-          title: 'Sent',
-          currentIndex: 1,
-          child: Column(
+        final isWide = MediaQuery.of(context).size.width >= 1000;
+
+        Widget sentList() {
+          return Column(
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    Text(
+                    const Text(
                       'Sent Emails',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
@@ -119,7 +119,6 @@ class _SentScreenState extends State<SentScreen> {
                   ],
                 ),
               ),
-              
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
@@ -167,12 +166,16 @@ class _SentScreenState extends State<SentScreen> {
                               itemCount: _emails.length,
                               itemBuilder: (context, index) {
                                 final email = _emails[index];
-                                return Card(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 4,
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border(
+                                      bottom: BorderSide(color: Colors.grey.shade200),
+                                    ),
                                   ),
                                   child: ListTile(
+                                    contentPadding: EdgeInsets.zero,
                                     leading: CircleAvatar(
                                       backgroundColor: Colors.green.shade100,
                                       child: Icon(
@@ -219,6 +222,38 @@ class _SentScreenState extends State<SentScreen> {
                               },
                             ),
                           ),
+              ),
+            ],
+          );
+        }
+
+        if (!isWide) {
+          return MobileScaffoldShell(title: 'Sent', body: sentList());
+        }
+
+        return Scaffold(
+          body: Column(
+            children: [
+              InboxTopBar(trailing: [
+                IconButton(
+                  tooltip: 'Settings',
+                  onPressed: () => Navigator.pushNamed(context, Routes.settings),
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+              ]),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const InboxSidebar(active: 'sent'),
+                    Expanded(
+                      child: Container(
+                        color: Colors.white,
+                        child: sentList(),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

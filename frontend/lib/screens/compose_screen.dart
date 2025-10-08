@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app.dart';
-import '../widgets/app_scaffold.dart';
+import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 
@@ -20,7 +20,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   bool _isValidatingRecipient = false;
-  bool _recipientExists = false;
+  String? _recipientValidationMessage;
 
   @override
   void dispose() {
@@ -30,39 +30,45 @@ class _ComposeScreenState extends State<ComposeScreen> {
     super.dispose();
   }
 
-  Future<void> _validateRecipient() async {
-    if (_toController.text.trim().isEmpty) {
-      _showMessage('Please enter recipient email', isError: true);
-      return;
+  Future<bool> _validateRecipient() async {
+    final address = _toController.text.trim();
+    if (address.isEmpty) {
+      setState(() {
+        _recipientValidationMessage = 'Please enter recipient email';
+      });
+      return false;
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (authProvider.user?.email == _toController.text.trim()) {
-      _showMessage('❌ You cannot send emails to yourself', isError: true);
+    if (authProvider.user?.email == address) {
       setState(() {
-        _recipientExists = false;
+        _recipientValidationMessage = 'You cannot send emails to yourself';
       });
-      return;
+      return false;
     }
 
     setState(() {
       _isValidatingRecipient = true;
-      _recipientExists = false;
+      _recipientValidationMessage = null;
     });
 
     try {
-      final exists = await _emailService.validateUser(_toController.text.trim());
-      setState(() {
-        _recipientExists = exists;
-      });
-
+      final exists = await _emailService.validateUser(address);
       if (exists) {
-        _showMessage('✅ User found in our system!', isError: false);
-      } else {
-        _showMessage('❌ User not found. They need to sign up first.', isError: true);
+        setState(() {
+          _recipientValidationMessage = null;
+        });
+        return true;
       }
+      setState(() {
+        _recipientValidationMessage = 'User not found. They need to sign up first.';
+      });
+      return false;
     } catch (e) {
-      _showMessage('Error validating user: ${e.toString()}', isError: true);
+      setState(() {
+        _recipientValidationMessage = 'Error validating user: ${e.toString()}';
+      });
+      return false;
     } finally {
       setState(() => _isValidatingRecipient = false);
     }
@@ -73,10 +79,9 @@ class _ComposeScreenState extends State<ComposeScreen> {
       return;
     }
 
-    if (!_recipientExists) {
-      _showMessage('Please validate recipient first', isError: true);
-      return;
-    }
+    // Validate recipient on send
+    final recipientOk = await _validateRecipient();
+    if (!recipientOk) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.user == null) {
@@ -126,19 +131,16 @@ class _ComposeScreenState extends State<ComposeScreen> {
     _toController.clear();
     _subjectController.clear();
     _bodyController.clear();
-    setState(() {
-      _recipientExists = false;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
-        return AppScaffold(
-          title: 'Compose',
-          currentIndex: 2,
-          child: Padding(
+        final isWide = MediaQuery.of(context).size.width >= 1000;
+
+        Widget formContent() {
+          return Padding(
             padding: const EdgeInsets.all(16),
             child: Form(
               key: _formKey,
@@ -157,51 +159,26 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   ),
                   const SizedBox(height: 16),
                   
-                  // To field with validation
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _toController,
-                          decoration: InputDecoration(
-                            labelText: 'To',
-                            prefixIcon: const Icon(Icons.email_outlined),
-                            suffixIcon: _recipientExists 
-                                ? const Icon(Icons.check_circle, color: Colors.green)
-                                : _toController.text.isNotEmpty 
-                                    ? const Icon(Icons.error, color: Colors.red)
-                                    : null,
-                          ),
-                          keyboardType: TextInputType.emailAddress,
-                          enabled: !_isLoading && !_isValidatingRecipient,
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'Please enter recipient email';
-                            }
-                            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
-                              return 'Please enter a valid email';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: (_isLoading || _isValidatingRecipient) ? null : _validateRecipient,
-                        icon: _isValidatingRecipient
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.check_circle_outline),
-                        label: const Text('Check'),
-                      ),
-                    ],
+                  // To field with validation (validation occurs on send)
+                  TextFormField(
+                    controller: _toController,
+                    decoration: const InputDecoration(
+                      labelText: 'To',
+                      prefixIcon: Icon(Icons.email_outlined),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    enabled: !_isLoading && !_isValidatingRecipient,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter recipient email';
+                      }
+                      if (!RegExp(r'^[\w\.-]+@([\w-]+\.)+[A-Za-z]{2,}$').hasMatch(value.trim())) {
+                        return 'Please enter a valid email';
+                      }
+                      return null;
+                    },
                   ),
-                  
-                  // Recipient validation message
-                  if (_toController.text.isNotEmpty && !_recipientExists)
+                  if (_recipientValidationMessage != null)
                     Container(
                       margin: const EdgeInsets.only(top: 8),
                       padding: const EdgeInsets.all(8),
@@ -216,7 +193,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'User not found. They need to sign up first.',
+                              _recipientValidationMessage!,
                               style: TextStyle(
                                 color: Colors.orange.shade700,
                                 fontSize: 12,
@@ -226,7 +203,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                         ],
                       ),
                     ),
-                  
+          
                   const SizedBox(height: 16),
                   
                   // Subject field
@@ -248,30 +225,49 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   
                   // Message body
                   Expanded(
-                    child: TextFormField(
-                      controller: _bodyController,
-                      decoration: const InputDecoration(
-                        labelText: 'Message',
-                        prefixIcon: Icon(Icons.message_outlined),
-                        alignLabelWithHint: true,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      enabled: !_isLoading,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a message';
-                        }
-                        return null;
-                      },
+                      padding: const EdgeInsets.all(8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, left: 4, right: 8),
+                            child: Icon(Icons.message_outlined, color: Colors.grey.shade700),
+                          ),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _bodyController,
+                              decoration: const InputDecoration(
+                                labelText: 'Message',
+                                border: InputBorder.none,
+                                alignLabelWithHint: true,
+                              ),
+                              maxLines: null,
+                              expands: true,
+                              textAlignVertical: TextAlignVertical.top,
+                              enabled: !_isLoading,
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Please enter a message';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+
                   const SizedBox(height: 16),
                   
                   // Send button
                   ElevatedButton.icon(
-                    onPressed: (_isLoading || !_recipientExists) ? null : _sendEmail,
+                    onPressed: _isLoading ? null : _sendEmail,
                     icon: _isLoading
                         ? const SizedBox(
                             width: 16,
@@ -287,6 +283,38 @@ class _ComposeScreenState extends State<ComposeScreen> {
                 ],
               ),
             ),
+          );
+        }
+
+        if (!isWide) {
+          return MobileScaffoldShell(title: 'Compose', body: formContent());
+        }
+
+        return Scaffold(
+          body: Column(
+            children: [
+              InboxTopBar(trailing: [
+                IconButton(
+                  tooltip: 'Settings',
+                  onPressed: () => Navigator.pushNamed(context, Routes.settings),
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+              ]),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const InboxSidebar(active: 'compose'),
+                    Expanded(
+                      child: Container(
+                        color: Colors.white,
+                        child: formContent(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         );
       },
