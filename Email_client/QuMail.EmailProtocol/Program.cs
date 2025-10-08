@@ -1,5 +1,6 @@
 using QuMail.EmailProtocol.Services;
 using QuMail.EmailProtocol.Data;
+using QuMail.EmailProtocol.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -22,6 +23,15 @@ var jwtAudience = Environment.GetEnvironmentVariable("JWT_AUDIENCE");
 
 // Add services
 builder.Services.AddControllers();
+
+// Register Level 3 PQC services (original)
+builder.Services.AddSingleton<Level3KyberPQC>();
+builder.Services.AddScoped<IOneTimePadEngine, Level1OneTimePadEngine>();
+builder.Services.AddScoped<Level3PQCEmailService>();
+
+// Register Enhanced PQC services (Kyber-1024, McEliece, AES-256 hybrid)
+builder.Services.AddSingleton<Level3EnhancedPQC>();
+builder.Services.AddScoped<Level3HybridEncryption>();
 
 // Add Entity Framework
 builder.Services.AddDbContext<AuthDbContext>(options =>

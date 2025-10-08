@@ -14,3 +14,10 @@ dist/
 build/
 coverage/
 *.iml
+
+# .NET build artifacts
+bin/
+obj/
+*.dll
+*.pdb
+*.cache
