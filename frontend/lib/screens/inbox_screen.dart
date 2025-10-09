@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:io' as io;
+import 'package:file_saver/file_saver.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart';
@@ -16,7 +22,8 @@ class _InboxScreenState extends State<InboxScreen> {
   List<Email> _emails = [];
   bool _isLoading = false;
   Email? _selectedEmail;
-  final bool _useMockInbox = true; // hardcoded list for UI testing
+  final bool _useMockInbox = false; // use real inbox data
+  String? _attachmentStatus;
 
   @override
   void initState() {
@@ -37,6 +44,78 @@ class _InboxScreenState extends State<InboxScreen> {
 
     try {
       final emails = await _emailService.getInbox(authProvider.user!.email);
+      // ignore: avoid_print
+      print('[inbox] loaded emails count=${emails.length}');
+      
+      // Decrypt emails directly in frontend
+      for (var email in emails) {
+        if (email.encryptionMethod == 'AES') {
+          try {
+            // ignore: avoid_print
+            print('[inbox][AES] decrypt id=${email.id} subj.len=${email.subject.length} body.len=${email.body.length}');
+            final subjectEnvelope = jsonDecode(email.subject);
+            final bodyEnvelope = jsonDecode(email.body);
+            
+            // AES decryption via backend proxy (GET)
+            final subUri = Uri.parse('http://localhost:5000/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(subjectEnvelope))}');
+            final bodyUri = Uri.parse('http://localhost:5000/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(bodyEnvelope))}');
+
+            final subjectResponse = await http.get(subUri);
+            final bodyResponse = await http.get(bodyUri);
+            
+            // ignore: avoid_print
+            print('[inbox][AES] decrypt subject status=${subjectResponse.statusCode} body.len=${subjectResponse.body.length}');
+            if (subjectResponse.statusCode == 200) {
+              final subjectResult = jsonDecode(subjectResponse.body);
+              email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
+            }
+            
+            // ignore: avoid_print
+            print('[inbox][AES] decrypt body status=${bodyResponse.statusCode} body.len=${bodyResponse.body.length}');
+            if (bodyResponse.statusCode == 200) {
+              final bodyResult = jsonDecode(bodyResponse.body);
+              email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
+            }
+          } catch (e) {
+            print('AES decryption failed: $e');
+            email.subject = 'AES Decryption Failed';
+            email.body = 'Failed to decrypt AES-encrypted email';
+          }
+        } else if (email.encryptionMethod == 'OTP') {
+          try {
+            final subjectEnvelope = jsonDecode(email.subject);
+            final bodyEnvelope = jsonDecode(email.body);
+            
+            // OTP decryption via otp_api_test.py
+            final subjectResponse = await http.post(
+              Uri.parse('http://127.0.0.1:8081/decrypt'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(subjectEnvelope),
+            );
+            
+            final bodyResponse = await http.post(
+              Uri.parse('http://127.0.0.1:8081/decrypt'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(bodyEnvelope),
+            );
+            
+            if (subjectResponse.statusCode == 200) {
+              final subjectResult = jsonDecode(subjectResponse.body);
+              email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
+            }
+            
+            if (bodyResponse.statusCode == 200) {
+              final bodyResult = jsonDecode(bodyResponse.body);
+              email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
+            }
+          } catch (e) {
+            print('OTP decryption failed: $e');
+            email.subject = 'OTP Decryption Failed';
+            email.body = 'Failed to decrypt OTP-encrypted email';
+          }
+        }
+      }
+      
       if (mounted) {
         setState(() => _emails = emails);
       }
@@ -162,7 +241,73 @@ class _InboxScreenState extends State<InboxScreen> {
                 style: TextStyle(color: Colors.grey.shade600),
               ),
               const SizedBox(height: 16),
-              Text(email.body),
+              Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : email.body),
+              const SizedBox(height: 16),
+              if (email.attachments.isNotEmpty) ...[
+                const Text('Attachments', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: email.attachments.map((a) {
+                    final isImg = _isImage(a.contentType, a.fileName);
+                    if (isImg) {
+                      final bytes = _decodeBase64MaybeUrl(a.contentBase64);
+                      if (bytes != null) {
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.memory(
+                            bytes,
+                            width: 120,
+                            height: 120,
+                            fit: BoxFit.cover,
+                          ),
+                        );
+                      }
+                    }
+                            return ActionChip(
+                      label: Text(a.fileName),
+                      avatar: const Icon(Icons.download_outlined),
+                      onPressed: () async {
+                                final data = _decodeBase64MaybeUrl(a.contentBase64);
+                                if (data == null) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to decode attachment')));
+                                  }
+                                  return;
+                                }
+                                final ext = _inferExt(a.fileName, a.contentType);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saving ${a.fileName}...')));
+                                }
+                                try {
+                                  if (ext.isEmpty) {
+                                    await FileSaver.instance.saveFile(
+                                      name: a.fileName,
+                                      bytes: data,
+                                      mimeType: MimeType.other,
+                                    );
+                                  } else {
+                                    await FileSaver.instance.saveFile(
+                                      name: a.fileName,
+                                      bytes: data,
+                                      ext: ext,
+                                      mimeType: MimeType.other,
+                                    );
+                                  }
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved ${a.fileName}')));
+                                  }
+                                } catch (_) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save failed')));
+                                  }
+                                }
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
             ],
           ),
         ),
@@ -190,7 +335,54 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   String _getPreview(String body) {
+    if (_isOtpEnvelope(body)) return 'Encrypted message';
     return body.length > 100 ? '${body.substring(0, 100)}...' : body;
+  }
+
+  bool _isImage(String contentType, String fileName) {
+    if (contentType.toLowerCase().startsWith('image/')) return true;
+    final lower = fileName.toLowerCase();
+    return lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.gif') || lower.endsWith('.webp');
+  }
+
+  bool _isOtpEnvelope(String body) {
+    // crude detection to avoid showing ciphertext JSON to users
+    if (body.length < 20) return false;
+    if (!body.contains('otp_key_id')) return false;
+    if (!body.contains('ciphertext_b64url')) return false;
+    return true;
+  }
+
+  String _inferExt(String fileName, String contentType) {
+    final idx = fileName.lastIndexOf('.');
+    if (idx != -1 && idx < fileName.length - 1) return fileName.substring(idx + 1);
+    if (contentType.startsWith('image/')) return contentType.split('/').last;
+    if (contentType == 'application/pdf') return 'pdf';
+    if (contentType.startsWith('text/')) return 'txt';
+    return '';
+  }
+
+  Uint8List? _decodeBase64MaybeUrl(String input) {
+    try {
+      // Try standard base64 first
+      return Uint8List.fromList(base64Decode(input));
+    } catch (_) {
+      try {
+        // Try base64url variant
+        var s = input.replaceAll('-', '+').replaceAll('_', '/');
+        switch (s.length % 4) {
+          case 2:
+            s += '==';
+            break;
+          case 3:
+            s += '=';
+            break;
+        }
+        return Uint8List.fromList(base64Decode(s));
+      } catch (_) {
+        return null;
+      }
+    }
   }
 
   @override
@@ -545,7 +737,74 @@ class _InboxScreenState extends State<InboxScreen> {
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
-                  child: Text(email.body),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : email.body),
+                      const SizedBox(height: 16),
+                      if (email.attachments.isNotEmpty) ...[
+                        const Text('Attachments', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: email.attachments.map((a) {
+                            final isImg = _isImage(a.contentType, a.fileName);
+                            if (isImg) {
+                              try {
+                                final bytes = base64Decode(a.contentBase64);
+                                return ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.memory(
+                                    Uint8List.fromList(bytes),
+                                    width: 120,
+                                    height: 120,
+                                    fit: BoxFit.cover,
+                                  ),
+                                );
+                              } catch (_) {}
+                            }
+                            return ElevatedButton.icon(
+                              icon: const Icon(Icons.download_outlined),
+                              label: Text(a.fileName),
+                              onPressed: () async {
+                                setState(() { _attachmentStatus = 'Decoding ${a.fileName}...'; });
+                                final data = _decodeBase64MaybeUrl(a.contentBase64);
+                                if (data == null) {
+                                  setState(() { _attachmentStatus = 'Failed to decode ${a.fileName}'; });
+                                  return;
+                                }
+                                final ext = _inferExt(a.fileName, a.contentType);
+                                setState(() { _attachmentStatus = 'Choosing location for ${a.fileName}...'; });
+                                try {
+                                  final suggestedName = ext.isEmpty ? a.fileName : (a.fileName.endsWith('.$ext') ? a.fileName : '${a.fileName}.$ext');
+                                  final savePath = await FilePicker.platform.saveFile(
+                                    dialogTitle: 'Save attachment',
+                                    fileName: suggestedName,
+                                    type: FileType.any,
+                                  );
+                                  if (savePath == null) {
+                                    setState(() { _attachmentStatus = 'Save cancelled'; });
+                                    return;
+                                  }
+                                  setState(() { _attachmentStatus = 'Saving to $savePath'; });
+                                  final file = io.File(savePath);
+                                  await file.writeAsBytes(data, flush: true);
+                                  setState(() { _attachmentStatus = 'Saved ${a.fileName} to $savePath'; });
+                                } catch (e) {
+                                  setState(() { _attachmentStatus = 'Save failed for ${a.fileName}: $e'; });
+                                }
+                              },
+                            );
+                          }).toList(),
+                        ),
+                        if (_attachmentStatus != null) ...[
+                          const SizedBox(height: 8),
+                          Text(_attachmentStatus!, style: const TextStyle(fontSize: 12)),
+                        ],
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ],

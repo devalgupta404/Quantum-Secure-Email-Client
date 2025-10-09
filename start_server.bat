@@ -93,6 +93,22 @@ if errorlevel 1 (
     echo Detected OTP API already listening on 8081; skipping start.
 )
 
+REM Start AES Server (runs on http://127.0.0.1:8082)
+echo Starting AES Server service...
+set "AES_SCRIPT=%ROOT%level2new\server2.py"
+if not exist "%AES_SCRIPT%" (
+    echo ERROR: %AES_SCRIPT% not found.
+    pause
+    exit /b 1
+)
+REM If port 8082 already in use, assume AES Server is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8082).TcpTestSucceeded" >nul 2>&1
+if errorlevel 1 (
+    start "AES Server" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%level2new'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('aes_server_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'server2.py' 2>&1 | Tee-Object -FilePath $log -Append"
+) else (
+    echo Detected AES Server already listening on 8082; skipping start.
+)
+
 REM Wait for OTP API to become available (max ~20s)
 set /a __tries=0
 echo Waiting for OTP API (127.0.0.1:8081)...
@@ -105,6 +121,21 @@ if errorlevel 1 (
     ) else (
         timeout /t 1 >nul
         goto wait_otp
+    )
+)
+
+REM Wait for AES Server to become available (max ~20s)
+set /a __tries=0
+echo Waiting for AES Server (127.0.0.1:8082)...
+:wait_aes
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8082).TcpTestSucceeded" >nul 2>&1
+if errorlevel 1 (
+    set /a __tries+=1
+    if !__tries! geq 20 (
+        echo WARNING: AES Server did not open port 8082 yet. Continuing...
+    ) else (
+        timeout /t 1 >nul
+        goto wait_aes
     )
 )
 

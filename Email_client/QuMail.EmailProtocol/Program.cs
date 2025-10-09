@@ -44,14 +44,14 @@ var jwtAudience = Environment.GetEnvironmentVariable("JWT_AUDIENCE");
 // Add services
 builder.Services.AddControllers();
 
-// Register Level 3 PQC services (original)
-builder.Services.AddSingleton<Level3KyberPQC>();
+// Register Level 3 PQC services (original) - Temporarily disabled due to dependency issues
+// builder.Services.AddSingleton<Level3KyberPQC>();
 builder.Services.AddScoped<IOneTimePadEngine, Level1OneTimePadEngine>();
-builder.Services.AddScoped<Level3PQCEmailService>();
+// builder.Services.AddScoped<Level3PQCEmailService>();
 
-// Register Enhanced PQC services (Kyber-1024, McEliece, AES-256 hybrid)
-builder.Services.AddSingleton<Level3EnhancedPQC>();
-builder.Services.AddScoped<Level3HybridEncryption>();
+// Register Enhanced PQC services (Kyber-1024, McEliece, AES-256 hybrid) - Temporarily disabled
+// builder.Services.AddSingleton<Level3EnhancedPQC>();
+// builder.Services.AddScoped<Level3HybridEncryption>();
 
 // Add Entity Framework
 builder.Services.AddDbContext<AuthDbContext>(options =>

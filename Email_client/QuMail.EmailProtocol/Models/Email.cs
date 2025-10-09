@@ -25,6 +25,12 @@ public class Email
     
     public bool IsRead { get; set; } = false;
     
+    [Required]
+    [MaxLength(50)]
+    public string EncryptionMethod { get; set; } = "OTP";
+    
+    public string? Attachments { get; set; }
+    
     // Navigation properties removed to avoid foreign key constraints
     // public User? Sender { get; set; }
     // public User? Recipient { get; set; }
