@@ -34,13 +34,16 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (await _context.Users.AnyAsync(u => u.Email == request.Email))
+            // Use original email as the primary app email; prevent duplicates by original email
+            var originalEmail = request.ExternalEmail ?? request.Email;
+            if (await _context.Users.AnyAsync(u => u.Email == originalEmail || u.ExternalEmail == originalEmail))
                 return BadRequest(new { message = "User with this email already exists" });
             // Derive username when not provided
             var requestedUsername = request.Username;
             if (string.IsNullOrWhiteSpace(requestedUsername))
             {
-                var localPart = request.Email.Split('@')[0];
+                var localPartSource = originalEmail;
+                var localPart = localPartSource.Split('@')[0];
                 requestedUsername = localPart.Length >= 3 ? localPart : ($"user_{Guid.NewGuid().ToString("N").Substring(0,8)}");
             }
             // Ensure uniqueness; append suffix if needed
@@ -57,7 +60,7 @@ public class AuthController : ControllerBase
             var user = new User
             {
                 Id = Guid.NewGuid(),
-                Email = request.Email,
+                Email = originalEmail,
                 Username = requestedUsername,
                 PasswordHash = passwordHash,
                 Name = request.Name,
@@ -67,37 +70,26 @@ public class AuthController : ControllerBase
                 UpdatedAt = DateTime.UtcNow
             };
 
-            // Map external mail account if provided
-            if (!string.IsNullOrWhiteSpace(request.ExternalEmail))
+            // Required external mapping and provider
+            user.ExternalEmail = originalEmail;
+            user.EmailProvider = request.EmailProvider;
+
+            // Validate and store app password (required, exactly 16 chars)
+            try
             {
-                user.ExternalEmail = request.ExternalEmail;
-            }
-            if (!string.IsNullOrWhiteSpace(request.EmailProvider))
-            {
-                user.EmailProvider = request.EmailProvider;
-            }
-            if (!string.IsNullOrWhiteSpace(request.AppPassword))
-            {
-                // Only validate if all required fields are provided
-                if (!string.IsNullOrWhiteSpace(request.EmailProvider) && !string.IsNullOrWhiteSpace(request.ExternalEmail))
+                var isValid = await ValidateAppPasswordAsync(request.ExternalEmail!, request.AppPassword!, request.EmailProvider!);
+                if (!isValid)
                 {
-                    try
-                    {
-                        var isValid = await ValidateAppPasswordAsync(request.ExternalEmail, request.AppPassword, request.EmailProvider);
-                        if (!isValid)
-                        {
-                            return BadRequest(new { message = "Invalid app password for the specified email provider" });
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "SMTP validation failed, proceeding without validation");
-                        // Continue without validation if SMTP test fails
-                    }
+                    return BadRequest(new { message = "Invalid app password for the specified email provider" });
                 }
-                // Store encrypted app password for SMTP use (not hash, needs reversal)
-                user.AppPasswordHash = SecretProtector.Encrypt(request.AppPassword);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "SMTP validation failed, proceeding without validation");
+                // Proceed even if SMTP check fails (network issues etc.)
+            }
+            // Store encrypted app password for SMTP use (not hash, needs reversal)
+            user.AppPasswordHash = SecretProtector.Encrypt(request.AppPassword!);
             if (!string.IsNullOrWhiteSpace(request.OAuth2Token))
             {
                 user.OAuth2Token = request.OAuth2Token;
@@ -135,7 +127,8 @@ public class AuthController : ControllerBase
     {
         try
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email && u.IsActive);
+            // Login using primary app email or original external email
+            var user = await _context.Users.FirstOrDefaultAsync(u => (u.Email == request.Email || u.ExternalEmail == request.Email) && u.IsActive);
 
             if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 return Unauthorized(new { message = "Invalid email or password" });
@@ -151,6 +144,8 @@ public class AuthController : ControllerBase
                 {
                     Id = user.Id,
                     Email = user.Email,
+                    ExternalEmail = user.ExternalEmail,
+                    EmailProvider = user.EmailProvider,
                     Name = user.Name,
                     Username = user.Username,
                     AvatarUrl = user.AvatarUrl
@@ -190,6 +185,8 @@ public class AuthController : ControllerBase
                 {
                     Id = user.Id,
                     Email = user.Email,
+                    ExternalEmail = user.ExternalEmail,
+                    EmailProvider = user.EmailProvider,
                     Name = user.Name,
                     Username = user.Username,
                     AvatarUrl = user.AvatarUrl
@@ -236,6 +233,8 @@ public class AuthController : ControllerBase
             {
                 Id = user.Id,
                 Email = user.Email,
+                ExternalEmail = user.ExternalEmail,
+                EmailProvider = user.EmailProvider,
                 Name = user.Name,
                 AvatarUrl = user.AvatarUrl
             });

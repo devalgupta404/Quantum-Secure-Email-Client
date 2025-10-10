@@ -15,7 +15,6 @@ public class Email
     public string RecipientEmail { get; set; } = string.Empty;
     
     [Required]
-    [MaxLength(500)]
     public string Subject { get; set; } = string.Empty;
     
     [Required]

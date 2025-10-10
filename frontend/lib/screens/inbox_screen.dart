@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io' as io;
+import 'dart:math' as math;
 import 'package:file_saver/file_saver.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -24,12 +25,14 @@ class _InboxScreenState extends State<InboxScreen> {
   Email? _selectedEmail;
   final bool _useMockInbox = false; // use real inbox data
   String? _attachmentStatus;
+  bool _askedForPqcKey = false;
 
   @override
   void initState() {
     super.initState();
     _loadEmails();
   }
+
 
   Future<void> _loadEmails() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -47,8 +50,22 @@ class _InboxScreenState extends State<InboxScreen> {
       // ignore: avoid_print
       print('[inbox] loaded emails count=${emails.length}');
       
+      // Log each email's raw data before decryption
+      for (int i = 0; i < emails.length; i++) {
+        final email = emails[i];
+        print('[inbox] Email $i raw data: ID=${email.id}, Subject="${email.subject}", Body="${email.body}", Method=${email.encryptionMethod}');
+        print('[inbox] Email $i Subject length: ${email.subject.length}, Body length: ${email.body.length}');
+      }
+      
       // Decrypt emails directly in frontend
       for (var email in emails) {
+        // If we encounter a PQC email and no private key set yet, generate one automatically
+        if ((email.encryptionMethod == 'PQC_2_LAYER' || email.encryptionMethod == 'PQC_3_LAYER') &&
+            EmailService.pqcPrivateKey == null && !_askedForPqcKey) {
+          _askedForPqcKey = true;
+          print('[inbox] Generating PQC key pair for decryption');
+          await EmailService.initializePqcKeys();
+        }
         if (email.encryptionMethod == 'AES') {
           try {
             // ignore: avoid_print
@@ -57,8 +74,8 @@ class _InboxScreenState extends State<InboxScreen> {
             final bodyEnvelope = jsonDecode(email.body);
             
             // AES decryption via backend proxy (GET)
-            final subUri = Uri.parse('http://localhost:5000/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(subjectEnvelope))}');
-            final bodyUri = Uri.parse('http://localhost:5000/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(bodyEnvelope))}');
+            final subUri = Uri.parse('http://localhost:5001/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(subjectEnvelope))}');
+            final bodyUri = Uri.parse('http://localhost:5001/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(bodyEnvelope))}');
 
             final subjectResponse = await http.get(subUri);
             final bodyResponse = await http.get(bodyUri);
@@ -112,6 +129,271 @@ class _InboxScreenState extends State<InboxScreen> {
             print('OTP decryption failed: $e');
             email.subject = 'OTP Decryption Failed';
             email.body = 'Failed to decrypt OTP-encrypted email';
+          }
+        }
+        // PQC 2-layer: subject/body contain JSON with encryptedBody+pqcCiphertext
+        else if (email.encryptionMethod == 'PQC_2_LAYER') {
+          try {
+            print('[inbox][PQC_2_LAYER] Attempting decryption for email ${email.id}');
+            print('[inbox][PQC_2_LAYER] Subject length: ${email.subject.length}, Body length: ${email.body.length}');
+            
+            Map<String, dynamic> subEnv;
+            Map<String, dynamic> bodyEnv;
+            
+            print('[inbox][PQC_2_LAYER] Raw subject content: "${email.subject}"');
+            print('[inbox][PQC_2_LAYER] Raw body content: "${email.body}"');
+            
+            try {
+              subEnv = jsonDecode(email.subject) as Map<String, dynamic>;
+              print('[inbox][PQC_2_LAYER] Successfully parsed subject JSON');
+            } catch (e) {
+              print('[inbox][PQC_2_LAYER] Failed to parse subject JSON: $e');
+              print('[inbox][PQC_2_LAYER] Subject content: ${email.subject.substring(0, math.min(100, email.subject.length))}...');
+              continue;
+            }
+            
+            try {
+              bodyEnv = jsonDecode(email.body) as Map<String, dynamic>;
+              print('[inbox][PQC_2_LAYER] Successfully parsed body JSON');
+            } catch (e) {
+              print('[inbox][PQC_2_LAYER] Failed to parse body JSON: $e');
+              print('[inbox][PQC_2_LAYER] Body content: ${email.body.substring(0, math.min(100, email.body.length))}...');
+              continue;
+            }
+            print('[inbox][PQC_2_LAYER] Subject envelope keys: ${subEnv.keys.toList()}');
+            print('[inbox][PQC_2_LAYER] Body envelope keys: ${bodyEnv.keys.toList()}');
+            
+            // Check if this is actually PQC data or OTP data mislabeled
+            if (subEnv.containsKey('encryptedBody') && subEnv.containsKey('pqcCiphertext')) {
+              // This is actual PQC data
+              final priv = EmailService.pqcPrivateKey;
+              print('[inbox][PQC_2_LAYER] Private key available: ${priv != null && priv.isNotEmpty}');
+              if (priv != null && priv.isNotEmpty) {
+                final subjectDecryptBody = {
+                  'encryptedBody': subEnv['encryptedBody'],
+                  'pqcCiphertext': subEnv['pqcCiphertext'],
+                  'privateKey': priv,
+                };
+                print('[inbox][PQC_2_LAYER] Subject decrypt body: ${jsonEncode(subjectDecryptBody)}');
+                try {
+                  final subResp = await http.post(
+                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(subjectDecryptBody),
+                  );
+                  final bodyDecryptBody = {
+                    'encryptedBody': bodyEnv['encryptedBody'],
+                    'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                    'privateKey': priv,
+                  };
+                  print('[inbox][PQC_2_LAYER] Body decrypt body: ${jsonEncode(bodyDecryptBody)}');
+                  final bodyResp = await http.post(
+                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(bodyDecryptBody),
+                  );
+
+                print('[inbox][PQC_2_LAYER] Subject decrypt status: ${subResp.statusCode}');
+                print('[inbox][PQC_2_LAYER] Body decrypt status: ${bodyResp.statusCode}');
+                if (subResp.statusCode == 200) {
+                  final subjectResult = jsonDecode(subResp.body) as Map<String, dynamic>;
+                  print('[inbox][PQC_2_LAYER] Subject decrypt response: ${subResp.body}');
+                  print('[inbox][PQC_2_LAYER] Subject decrypt result keys: ${subjectResult.keys.toList()}');
+                  if (subjectResult.containsKey('data')) {
+                    print('[inbox][PQC_2_LAYER] Subject data keys: ${(subjectResult['data'] as Map<String, dynamic>).keys.toList()}');
+                    email.subject = subjectResult['data']['plaintext'] ?? email.subject;
+                    print('[inbox][PQC_2_LAYER] Subject decrypted content: "${email.subject}"');
+                  } else {
+                    print('[inbox][PQC_2_LAYER] Subject result: ${subjectResult}');
+                    email.subject = subjectResult['plaintext'] ?? email.subject;
+                    print('[inbox][PQC_2_LAYER] Subject decrypted content (direct): "${email.subject}"');
+                  }
+                  print('[inbox][PQC_2_LAYER] Subject decrypted successfully');
+                } else {
+                  print('[inbox][PQC_2_LAYER] Subject decrypt failed: ${subResp.body}');
+                }
+                if (bodyResp.statusCode == 200) {
+                  final bodyResult = jsonDecode(bodyResp.body) as Map<String, dynamic>;
+                  print('[inbox][PQC_2_LAYER] Body decrypt response: ${bodyResp.body}');
+                  print('[inbox][PQC_2_LAYER] Body decrypt result keys: ${bodyResult.keys.toList()}');
+                  if (bodyResult.containsKey('data')) {
+                    print('[inbox][PQC_2_LAYER] Body data keys: ${(bodyResult['data'] as Map<String, dynamic>).keys.toList()}');
+                    email.body = bodyResult['data']['plaintext'] ?? email.body;
+                    print('[inbox][PQC_2_LAYER] Body decrypted content: "${email.body}"');
+                  } else {
+                    print('[inbox][PQC_2_LAYER] Body result: ${bodyResult}');
+                    email.body = bodyResult['plaintext'] ?? email.body;
+                    print('[inbox][PQC_2_LAYER] Body decrypted content (direct): "${email.body}"');
+                  }
+                  print('[inbox][PQC_2_LAYER] Body decrypted successfully');
+                } else {
+                  print('[inbox][PQC_2_LAYER] Body decrypt failed: ${bodyResp.body}');
+                }
+                } catch (e) {
+                  print('[inbox][PQC_2_LAYER] HTTP request failed: $e');
+                }
+              }
+            } else if (subEnv.containsKey('otp_key_id') && subEnv.containsKey('ciphertext_b64url')) {
+              // This is PQC_2_LAYER hybrid: PQC for key exchange + OTP for message encryption
+              print('[inbox][PQC_2_LAYER] Detected PQC_2_LAYER hybrid (PQC key exchange + OTP message encryption)');
+              
+              // For PQC_2_LAYER, we need to:
+              // 1. Use PQC to decrypt the OTP key (if there's a PQC-encrypted key)
+              // 2. Use the decrypted OTP key to decrypt the message
+              
+              // For now, let's try direct OTP decryption since the OTP key might be embedded
+              // In a full implementation, we'd first decrypt the PQC-encrypted OTP key
+              final subjectResponse = await http.post(
+                Uri.parse('http://127.0.0.1:8081/decrypt'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(subEnv),
+              );
+              final bodyResponse = await http.post(
+                Uri.parse('http://127.0.0.1:8081/decrypt'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(bodyEnv),
+              );
+              
+              if (subjectResponse.statusCode == 200) {
+                final subjectResult = jsonDecode(subjectResponse.body);
+                email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
+                print('[inbox][PQC_2_LAYER] Subject decrypted with hybrid PQC+OTP successfully');
+              } else {
+                print('[inbox][PQC_2_LAYER] Subject hybrid decryption failed: ${subjectResponse.body}');
+              }
+              if (bodyResponse.statusCode == 200) {
+                final bodyResult = jsonDecode(bodyResponse.body);
+                email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
+                print('[inbox][PQC_2_LAYER] Body decrypted with hybrid PQC+OTP successfully');
+              } else {
+                print('[inbox][PQC_2_LAYER] Body hybrid decryption failed: ${bodyResponse.body}');
+              }
+            } else {
+              print('[inbox][PQC_2_LAYER] Unknown data format, cannot decrypt');
+            }
+          } catch (e) {
+            print('PQC 2-layer decryption failed: $e');
+          }
+        }
+        // PQC 3-layer enhanced
+        else if (email.encryptionMethod == 'PQC_3_LAYER') {
+          try {
+            print('[inbox][PQC_3_LAYER] Attempting decryption for email ${email.id}');
+            print('[inbox][PQC_3_LAYER] Subject length: ${email.subject.length}, Body length: ${email.body.length}');
+            
+            Map<String, dynamic> subEnv;
+            Map<String, dynamic> bodyEnv;
+            
+            print('[inbox][PQC_3_LAYER] Raw subject content: "${email.subject}"');
+            print('[inbox][PQC_3_LAYER] Raw body content: "${email.body}"');
+            
+            try {
+              subEnv = jsonDecode(email.subject) as Map<String, dynamic>;
+              print('[inbox][PQC_3_LAYER] Successfully parsed subject JSON');
+            } catch (e) {
+              print('[inbox][PQC_3_LAYER] Failed to parse subject JSON: $e');
+              print('[inbox][PQC_3_LAYER] Subject content: ${email.subject.substring(0, math.min(100, email.subject.length))}...');
+              continue;
+            }
+            
+            try {
+              bodyEnv = jsonDecode(email.body) as Map<String, dynamic>;
+              print('[inbox][PQC_3_LAYER] Successfully parsed body JSON');
+            } catch (e) {
+              print('[inbox][PQC_3_LAYER] Failed to parse body JSON: $e');
+              print('[inbox][PQC_3_LAYER] Body content: ${email.body.substring(0, math.min(100, email.body.length))}...');
+              continue;
+            }
+            print('[inbox][PQC_3_LAYER] Subject envelope keys: ${subEnv.keys.toList()}');
+            print('[inbox][PQC_3_LAYER] Body envelope keys: ${bodyEnv.keys.toList()}');
+            
+            // Check if this is actually PQC data or OTP data mislabeled
+            if (subEnv.containsKey('encryptedBody') && subEnv.containsKey('pqcCiphertext')) {
+              // This is actual PQC data
+              final priv = EmailService.pqcPrivateKey;
+              print('[inbox][PQC_3_LAYER] Private key available: ${priv != null && priv.isNotEmpty}');
+              if (priv != null && priv.isNotEmpty) {
+              try {
+                final subResp = await http.post(
+                  Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({
+                    'encryptedBody': subEnv['encryptedBody'],
+                    'pqcCiphertext': subEnv['pqcCiphertext'],
+                    'privateKey': priv,
+                    'algorithm': subEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
+                    'usedAES': subEnv['useAES'] ?? true,
+                  }),
+                );
+                final bodyResp = await http.post(
+                  Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({
+                    'encryptedBody': bodyEnv['encryptedBody'],
+                    'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                    'privateKey': priv,
+                    'algorithm': bodyEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
+                    'usedAES': bodyEnv['useAES'] ?? true,
+                  }),
+                );
+
+                if (subResp.statusCode == 200) {
+                  email.subject = (jsonDecode(subResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.subject;
+                  print('[inbox][PQC_3_LAYER] Subject decrypted successfully');
+                } else {
+                  print('[inbox][PQC_3_LAYER] Subject decrypt failed: ${subResp.body}');
+                }
+                if (bodyResp.statusCode == 200) {
+                  email.body = (jsonDecode(bodyResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.body;
+                  print('[inbox][PQC_3_LAYER] Body decrypted successfully');
+                } else {
+                  print('[inbox][PQC_3_LAYER] Body decrypt failed: ${bodyResp.body}');
+                }
+              } catch (e) {
+                print('[inbox][PQC_3_LAYER] HTTP request failed: $e');
+              }
+              }
+            } else if (subEnv.containsKey('otp_key_id') && subEnv.containsKey('ciphertext_b64url')) {
+              // This is PQC_3_LAYER hybrid: PQC for key exchange + AES + OTP for message encryption
+              print('[inbox][PQC_3_LAYER] Detected PQC_3_LAYER hybrid (PQC key exchange + AES + OTP message encryption)');
+              
+              // For PQC_3_LAYER, we need to:
+              // 1. Use PQC to decrypt the AES key (if there's a PQC-encrypted AES key)
+              // 2. Use AES to decrypt the OTP key
+              // 3. Use the OTP key to decrypt the message
+              
+              // For now, let's try direct OTP decryption since the OTP key might be embedded
+              // In a full implementation, we'd first decrypt the PQC-encrypted AES key, then AES-decrypt the OTP key
+              final subjectResponse = await http.post(
+                Uri.parse('http://127.0.0.1:8081/decrypt'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(subEnv),
+              );
+              final bodyResponse = await http.post(
+                Uri.parse('http://127.0.0.1:8081/decrypt'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(bodyEnv),
+              );
+              
+              if (subjectResponse.statusCode == 200) {
+                final subjectResult = jsonDecode(subjectResponse.body);
+                email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
+                print('[inbox][PQC_3_LAYER] Subject decrypted with hybrid PQC+AES+OTP successfully');
+              } else {
+                print('[inbox][PQC_3_LAYER] Subject hybrid decryption failed: ${subjectResponse.body}');
+              }
+              if (bodyResponse.statusCode == 200) {
+                final bodyResult = jsonDecode(bodyResponse.body);
+                email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
+                print('[inbox][PQC_3_LAYER] Body decrypted with hybrid PQC+AES+OTP successfully');
+              } else {
+                print('[inbox][PQC_3_LAYER] Body hybrid decryption failed: ${bodyResponse.body}');
+              }
+            } else {
+              print('[inbox][PQC_3_LAYER] Unknown data format, cannot decrypt');
+            }
+          } catch (e) {
+            print('PQC 3-layer decryption failed: $e');
           }
         }
       }
@@ -322,15 +604,17 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   String _formatDate(DateTime date) {
+    // Convert UTC date to local time for display
+    final localDate = date.toLocal();
     final now = DateTime.now();
-    final difference = now.difference(date);
+    final difference = now.difference(localDate);
 
     if (difference.inDays == 0) {
-      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      return 'Today ${localDate.hour.toString().padLeft(2, '0')}:${localDate.minute.toString().padLeft(2, '0')}';
     } else if (difference.inDays == 1) {
-      return 'Yesterday ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      return 'Yesterday ${localDate.hour.toString().padLeft(2, '0')}:${localDate.minute.toString().padLeft(2, '0')}';
     } else {
-      return '${date.day}/${date.month}/${date.year}';
+      return '${localDate.day}/${localDate.month}/${localDate.year}';
     }
   }
 

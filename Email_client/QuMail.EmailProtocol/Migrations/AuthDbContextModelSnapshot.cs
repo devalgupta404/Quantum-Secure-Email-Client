@@ -169,6 +169,17 @@ namespace QuMail.EmailProtocol.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<DateTime?>("PqcKeyGeneratedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PqcPrivateKey")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("PqcPublicKey")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")

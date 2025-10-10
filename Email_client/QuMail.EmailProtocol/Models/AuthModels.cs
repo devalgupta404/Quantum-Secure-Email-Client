@@ -31,15 +31,18 @@ public class RegisterRequest
     [StringLength(255, MinimumLength = 3)]
     public string? Username { get; set; }
 
-    // External email mapping (optional at signup)
+    // Original email used for external provider (required)
+    [Required]
     [EmailAddress]
     public string? ExternalEmail { get; set; }
 
-    // Preferred provider key: gmail | yahoo | outlook
+    // Preferred provider key: gmail | yahoo | outlook (required)
+    [Required]
     [StringLength(50)]
     public string? EmailProvider { get; set; }
 
-    // Exactly 16 chars if provided (store hash server-side)
+    // Exactly 16 chars (store encrypted server-side)
+    [Required]
     [StringLength(16, MinimumLength = 16)]
     public string? AppPassword { get; set; }
 
@@ -58,6 +61,8 @@ public class UserDto
 {
     public Guid Id { get; set; }
     public string Email { get; set; } = string.Empty;
+    public string? ExternalEmail { get; set; }
+    public string? EmailProvider { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string? AvatarUrl { get; set; }

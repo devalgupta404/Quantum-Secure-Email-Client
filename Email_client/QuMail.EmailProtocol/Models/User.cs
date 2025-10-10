@@ -52,6 +52,15 @@ public class User
     [StringLength(2048)]
     public string? OAuth2Token { get; set; }
 
+    // PQC Key Storage
+    [StringLength(2048)]
+    public string? PqcPublicKey { get; set; }
+
+    [StringLength(2048)]
+    public string? PqcPrivateKey { get; set; }
+
+    public DateTime? PqcKeyGeneratedAt { get; set; }
+
     // Navigation properties
     public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public virtual ICollection<UserSession> UserSessions { get; set; } = new List<UserSession>();

@@ -139,6 +139,37 @@ if errorlevel 1 (
     )
 )
 
+REM Start PQC Server (runs on http://127.0.0.1:8083)
+echo Starting PQC Server service...
+set "PQC_SCRIPT=%ROOT%level3\pqc_server.py"
+if not exist "%PQC_SCRIPT%" (
+    echo ERROR: %PQC_SCRIPT% not found.
+    pause
+    exit /b 1
+)
+REM If port 8083 already in use, assume PQC Server is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8083).TcpTestSucceeded" >nul 2>&1
+if errorlevel 1 (
+    start "PQC Server" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%level3'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('pqc_server_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'pqc_server.py' 2>&1 | Tee-Object -FilePath $log -Append"
+) else (
+    echo Detected PQC Server already listening on 8083; skipping start.
+)
+
+REM Wait for PQC Server to become available (max ~20s)
+set /a __tries=0
+echo Waiting for PQC Server (127.0.0.1:8083)...
+:wait_pqc
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8083).TcpTestSucceeded" >nul 2>&1
+if errorlevel 1 (
+    set /a __tries+=1
+    if !__tries! geq 20 (
+        echo WARNING: PQC Server did not open port 8083 yet. Continuing...
+    ) else (
+        timeout /t 1 >nul
+        goto wait_pqc
+    )
+)
+
 REM Quick sanity check of OTP encrypt endpoint; write result to a separate health file
 powershell -NoProfile -Command "$p=@{text='health-check'}|ConvertTo-Json; try { $r=Invoke-RestMethod -Uri 'http://127.0.0.1:8081/api/otp/encrypt' -Method Post -ContentType 'application/json' -Body $p; 'OTP encrypt OK' } catch { 'OTP encrypt FAILED: ' + $_.Exception.Message }" >> "%LOG_DIR%\otp_health.txt" 2>&1
 

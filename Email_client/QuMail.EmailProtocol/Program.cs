@@ -50,11 +50,11 @@ builder.Services.AddSingleton<IQuantumKeyManager, SecureKeyManager>();
 // Register Level 3 PQC services (original)
 builder.Services.AddSingleton<Level3KyberPQC>();
 builder.Services.AddScoped<IOneTimePadEngine, Level1OneTimePadEngine>();
-// builder.Services.AddScoped<Level3PQCEmailService>();
+builder.Services.AddScoped<Level3PQCEmailService>();
 
-// Register Enhanced PQC services (Kyber-1024, McEliece, AES-256 hybrid) - Temporarily disabled
-// builder.Services.AddSingleton<Level3EnhancedPQC>();
-// builder.Services.AddScoped<Level3HybridEncryption>();
+// Register Enhanced PQC services (Kyber-1024, McEliece, AES-256 hybrid)
+builder.Services.AddSingleton<Level3EnhancedPQC>();
+builder.Services.AddScoped<Level3HybridEncryption>();
 
 // Add Entity Framework
 builder.Services.AddDbContext<AuthDbContext>(options =>
@@ -152,4 +152,5 @@ app.MapControllers();
 // Simple health check
 app.MapGet("/api/health", () => "OK");
 
-app.Run("http://0.0.0.0:5000");
+// Change API port to 5001 to avoid collisions when 5000 is occupied
+app.Run("http://0.0.0.0:5001");

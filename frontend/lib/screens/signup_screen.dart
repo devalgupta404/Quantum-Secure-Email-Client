@@ -90,25 +90,7 @@ class _SignupScreenState extends State<SignupScreen> {
               },
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                prefixIcon: Icon(Icons.email_outlined),
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter your email';
-                }
-                if (!EmailValidator.validate(value)) {
-                  return 'Please enter a valid email';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
+            // Removed separate QuMail email field. We use original email below as the app email too.
             TextFormField(
               controller: _passwordController,
               obscureText: _obscurePassword,
@@ -167,70 +149,130 @@ class _SignupScreenState extends State<SignupScreen> {
               },
             ),
             const SizedBox(height: 16),
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: const Text('Optional: Link external email for SMTP delivery'),
-              children: [
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _usernameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Preferred Username (optional)',
-                    prefixIcon: Icon(Icons.alternate_email_outlined),
-                    border: OutlineInputBorder(),
+            TextFormField(
+              controller: _externalEmailController,
+              decoration: const InputDecoration(
+                labelText: 'Original Email (used as your app email)',
+                prefixIcon: Icon(Icons.email_outlined),
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.emailAddress,
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) return 'Please enter your original email';
+                if (!EmailValidator.validate(value.trim())) return 'Please enter a valid email';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _emailProvider,
+              decoration: const InputDecoration(
+                labelText: 'Email Provider (required)',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'gmail', child: Text('Gmail')),
+                DropdownMenuItem(value: 'yahoo', child: Text('Yahoo')),
+                DropdownMenuItem(value: 'outlook', child: Text('Outlook')),
+              ],
+              onChanged: (v) => setState(() => _emailProvider = v),
+              validator: (v) => v == null || v.isEmpty ? 'Please select your provider' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _appPasswordController,
+              decoration: const InputDecoration(
+                labelText: 'App Password (exactly 16 chars)',
+                prefixIcon: Icon(Icons.key_outlined),
+                border: OutlineInputBorder(),
+              ),
+              maxLength: 16,
+              obscureText: true,
+              validator: (value) {
+                if (value == null || value.isEmpty) return 'Please enter your 16-char app password';
+                var cleanValue = value.replaceAll(' ', '');
+                if (cleanValue.length != 16) {
+                  return 'App password must be exactly 16 characters (excluding spaces)';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                prefixIcon: Icon(Icons.person_outlined),
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter your full name';
+                }
+                if (value.length < 2) {
+                  return 'Name must be at least 2 characters';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _passwordController,
+              obscureText: _obscurePassword,
+              decoration: InputDecoration(
+                labelText: 'QuMail Password',
+                prefixIcon: const Icon(Icons.lock_outlined),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword ? Icons.visibility : Icons.visibility_off,
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _externalEmailController,
-                  decoration: const InputDecoration(
-                    labelText: 'External Email (e.g., your Gmail)',
-                    prefixIcon: Icon(Icons.email_outlined),
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.emailAddress,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _emailProvider,
-                  decoration: const InputDecoration(
-                    labelText: 'Email Provider',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'gmail', child: Text('Gmail')),
-                    DropdownMenuItem(value: 'yahoo', child: Text('Yahoo')),
-                    DropdownMenuItem(value: 'outlook', child: Text('Outlook')),
-                  ],
-                  onChanged: (v) => setState(() => _emailProvider = v),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _appPasswordController,
-                  decoration: const InputDecoration(
-                    labelText: 'App Password (16 chars)',
-                    prefixIcon: Icon(Icons.key_outlined),
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLength: 16,
-                  obscureText: true,
-                  validator: (value) {
-                    if (value != null && value.isNotEmpty) {
-                      if (value.length != 16) {
-                        return 'App password must be exactly 16 characters';
-                      }
-                      // Gmail/Yahoo app passwords can contain letters, numbers, and some special chars
-                      // Remove spaces for validation but allow them in the input
-                      var cleanValue = value.replaceAll(' ', '');
-                      if (cleanValue.length != 16) {
-                        return 'App password must be exactly 16 characters (excluding spaces)';
-                      }
-                    }
-                    return null;
+                  onPressed: () {
+                    setState(() {
+                      _obscurePassword = !_obscurePassword;
+                    });
                   },
                 ),
-                const SizedBox(height: 8),
-              ],
+                border: const OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a password';
+                }
+                if (value.length < 6) {
+                  return 'Password must be at least 6 characters';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _confirmPasswordController,
+              obscureText: _obscureConfirmPassword,
+              decoration: InputDecoration(
+                labelText: 'Confirm QuMail Password',
+                prefixIcon: const Icon(Icons.lock_outlined),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _obscureConfirmPassword = !_obscureConfirmPassword;
+                    });
+                  },
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please confirm your password';
+                }
+                if (value != _passwordController.text) {
+                  return 'Passwords do not match';
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 24),
             Consumer<AuthProvider>(
@@ -322,14 +364,15 @@ class _SignupScreenState extends State<SignupScreen> {
   Future<void> _handleSignup() async {
     if (_formKey.currentState!.validate()) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      if (_emailProvider == null) return;
       final success = await authProvider.register(
-        _emailController.text.trim(),
+        _externalEmailController.text.trim(),
         _passwordController.text,
         _nameController.text.trim(),
         username: _usernameController.text.trim().isEmpty ? null : _usernameController.text.trim(),
-        externalEmail: _externalEmailController.text.trim().isEmpty ? null : _externalEmailController.text.trim(),
-        emailProvider: _emailProvider,
-        appPassword: _appPasswordController.text.trim().isEmpty ? null : _appPasswordController.text.trim(),
+        externalEmail: _externalEmailController.text.trim(),
+        emailProvider: _emailProvider!,
+        appPassword: _appPasswordController.text.trim(),
       );
 
       if (success && mounted) {

@@ -6,7 +6,7 @@ import '../models/user.dart';
 import '../models/auth_requests.dart';
 
 class AuthService {
-  static const String _baseUrl = 'http://localhost:5000/api';
+  static const String _baseUrl = 'http://localhost:5001/api';
   static const String _tokenKey = 'auth_token';
 
   Future<AuthResponse> login(String email, String password) async {
@@ -31,7 +31,7 @@ class AuthService {
     }
   }
 
-  Future<AuthResponse> register(String email, String password, String name, {String? username, String? externalEmail, String? emailProvider, String? appPassword}) async {
+  Future<AuthResponse> register(String email, String password, String name, {String? username, required String externalEmail, required String emailProvider, required String appPassword}) async {
     try {
       final request = RegisterRequest(
         email: email,

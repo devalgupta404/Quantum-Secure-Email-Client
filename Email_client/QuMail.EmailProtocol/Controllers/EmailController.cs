@@ -21,11 +21,10 @@ public class EmailController : ControllerBase
 {
     private readonly AuthDbContext _context;
     private readonly ILogger<EmailController> _logger;
-    // PQC services temporarily disabled due to dependency issues
-    // private readonly Level3KyberPQC _kyberPQC;
-    // private readonly Level3PQCEmailService _pqcEmailService;
-    // private readonly Level3EnhancedPQC _enhancedPQC;
-    // private readonly Level3HybridEncryption _hybridEncryption;
+    private readonly Level3KyberPQC _kyberPQC;
+    private readonly Level3PQCEmailService _pqcEmailService;
+    private readonly Level3EnhancedPQC _enhancedPQC;
+    private readonly Level3HybridEncryption _hybridEncryption;
     private static readonly HttpClient _http = new HttpClient
     {
         Timeout = TimeSpan.FromSeconds(10)
@@ -34,15 +33,76 @@ public class EmailController : ControllerBase
 
     public EmailController(
         AuthDbContext context, 
-        ILogger<EmailController> logger)
+        ILogger<EmailController> logger,
+        Level3KyberPQC kyberPQC,
+        Level3PQCEmailService pqcEmailService,
+        Level3EnhancedPQC enhancedPQC,
+        Level3HybridEncryption hybridEncryption)
     {
         _context = context;
         _logger = logger;
-        // PQC services temporarily disabled
-        // _kyberPQC = kyberPQC;
-        // _pqcEmailService = pqcEmailService;
-        // _enhancedPQC = enhancedPQC;
-        // _hybridEncryption = hybridEncryption;
+        _kyberPQC = kyberPQC;
+        _pqcEmailService = pqcEmailService;
+        _enhancedPQC = enhancedPQC;
+        _hybridEncryption = hybridEncryption;
+    }
+
+    /// <summary>
+    /// Get a user's PQC public key by email (supports internal Email or ExternalEmail)
+    /// GET /api/email/pqc/public-key/{email}
+    /// </summary>
+    [HttpGet("pqc/public-key/{email}")]
+    public async Task<IActionResult> GetPqcPublicKey(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return BadRequest(new { success = false, message = "Email is required" });
+        }
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email || u.ExternalEmail == email);
+        if (user == null)
+        {
+            return NotFound(new { success = false, message = "User not found" });
+        }
+
+        if (string.IsNullOrWhiteSpace(user.PqcPublicKey))
+        {
+            return NotFound(new { success = false, message = "PQC public key not available for this user" });
+        }
+
+        return Ok(new { success = true, data = new { publicKey = user.PqcPublicKey } });
+    }
+
+    public class RegisterPqcKeyRequest
+    {
+        public string Email { get; set; } = string.Empty;
+        public string PublicKey { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Register or update a user's PQC public key
+    /// POST /api/email/pqc/public-key
+    /// Body: { email, publicKey }
+    /// </summary>
+    [HttpPost("pqc/public-key")]
+    public async Task<IActionResult> RegisterPqcPublicKey([FromBody] RegisterPqcKeyRequest request)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.PublicKey))
+        {
+            return BadRequest(new { success = false, message = "Email and publicKey are required" });
+        }
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email || u.ExternalEmail == request.Email);
+        if (user == null)
+        {
+            return NotFound(new { success = false, message = "User not found" });
+        }
+
+        user.PqcPublicKey = request.PublicKey;
+        user.PqcKeyGeneratedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new { success = true });
     }
 
     [HttpPost("send")]
@@ -108,16 +168,16 @@ public class EmailController : ControllerBase
                         break;
 
                     case "PQC_2_LAYER":
-                        _logger.LogInformation("PQC 2-layer encryption temporarily disabled - using OTP fallback");
-                        subjectEnvelope = await EncryptBodyAsync(request.Subject);
-                        bodyEnvelope = await EncryptBodyAsync(request.Body);
+                        _logger.LogInformation("Using PQC 2-layer encryption");
+                        subjectEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Subject, request.RecipientPublicKey);
+                        bodyEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Body, request.RecipientPublicKey);
                         attachmentsJson = await EncryptAttachmentsOTPAsync(request.Attachments);
                         break;
 
                     case "PQC_3_LAYER":
-                        _logger.LogInformation("PQC 3-layer encryption temporarily disabled - using OTP fallback");
-                        subjectEnvelope = await EncryptBodyAsync(request.Subject);
-                        bodyEnvelope = await EncryptBodyAsync(request.Body);
+                        _logger.LogInformation("Using PQC 3-layer encryption");
+                        subjectEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Subject, request.RecipientPublicKey);
+                        bodyEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Body, request.RecipientPublicKey);
                         attachmentsJson = await EncryptAttachmentsOTPAsync(request.Attachments);
                         break;
 
@@ -129,12 +189,16 @@ public class EmailController : ControllerBase
                 }
             }
 
+            // Resolve sender original email if available
+            var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
+            var senderOriginal = !string.IsNullOrWhiteSpace(sender?.ExternalEmail) ? sender!.ExternalEmail! : request.SenderEmail;
+
             // Create email record
             var email = new Email
             {
                 Id = Guid.NewGuid(),
-                SenderEmail = request.SenderEmail,
-                RecipientEmail = recipient.Email, // normalize to internal app email
+                SenderEmail = senderOriginal,
+                RecipientEmail = request.RecipientEmail, // Store the actual recipient email from request
                 Subject = subjectEnvelope,
                 Body = bodyEnvelope,
                 EncryptionMethod = request.EncryptionMethod,
@@ -589,8 +653,21 @@ public class EmailController : ControllerBase
 
     private async Task<string> DecryptPQCAsync(PQCEnvelope envelope)
     {
-        _logger.LogInformation("PQC decryption requested but temporarily disabled");
-        return "PQC decryption temporarily disabled";
+        try
+        {
+            _logger.LogInformation("Attempting PQC decryption");
+            
+            // For now, return the original encrypted data as JSON string
+            // This allows the frontend to handle the decryption
+            var jsonString = JsonSerializer.Serialize(envelope, _jsonOptions);
+            _logger.LogInformation("Returning PQC envelope as JSON for frontend decryption");
+            return jsonString;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PQC decryption failed");
+            return "PQC decryption failed";
+        }
     }
 
     private bool TryParseAESEnvelope(string body, out AESEnvelope envelope)
@@ -840,8 +917,6 @@ public class EmailController : ControllerBase
         return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
     }
 
-    // PQC methods temporarily disabled due to dependency issues
-    /*
     private async Task<EncryptionResult> EncryptWithPQC2LayerAsync(string subject, string body, string recipientPublicKey, List<SendAttachment>? attachments)
     {
         _logger.LogInformation("Encrypting with PQC 2-layer (Kyber-512 + OTP)");
@@ -893,7 +968,6 @@ public class EmailController : ControllerBase
         
         return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
     }
-    */
 
     private async Task<string> EncryptWithAESGCMAsync(string plaintext)
     {
@@ -948,8 +1022,6 @@ public class EmailController : ControllerBase
         }
     }
 
-    // PQC methods temporarily disabled due to dependency issues
-    /*
     private async Task<string> EncryptSingleWithPQC2LayerAsync(string plaintext, string recipientPublicKey)
     {
         try
@@ -985,7 +1057,7 @@ public class EmailController : ControllerBase
             var encrypted = _hybridEncryption.Encrypt(
                 plaintext, 
                 recipientPublicKey, 
-                Level3EnhancedPQC.SecurityLevel.Kyber1024, 
+                Level3EnhancedPQC.SecurityLevel.Kyber512, 
                 useAES: true);
             
             // Store PQC envelope
@@ -1007,7 +1079,6 @@ public class EmailController : ControllerBase
             throw;
         }
     }
-    */
 }
 
 public class SendEmailRequest

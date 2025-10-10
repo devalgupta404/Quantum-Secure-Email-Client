@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 import '../app.dart';
 import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
@@ -49,6 +51,46 @@ class _ComposeScreenState extends State<ComposeScreen> {
     });
   }
 
+  Future<void> _generatePublicKey() async {
+    try {
+      // Try fetch recipient's PQC public key by email first
+      final recipientEmail = _toController.text.trim();
+      if (recipientEmail.isNotEmpty) {
+        try {
+          final resp = await http.get(Uri.parse('http://localhost:5001/api/email/pqc/public-key/${Uri.encodeComponent(recipientEmail)}'));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body) as Map<String, dynamic>;
+            final pk = (data['data'] as Map<String, dynamic>)['publicKey'] as String;
+            setState(() {
+              _recipientPublicKeyController.text = pk;
+            });
+            _showMessage('Recipient PQC public key fetched', isError: false);
+            return;
+          }
+        } catch (_) {}
+      }
+
+      // Generate my own key so I can copy/share
+      final success = await EmailService.initializePqcKeys();
+      if (success && EmailService.pqcPublicKey != null) {
+        if (recipientEmail.isEmpty) {
+          // If no recipient specified, fill with my public key for convenience (for sharing/testing)
+          setState(() {
+            _recipientPublicKeyController.text = EmailService.pqcPublicKey!;
+          });
+          _showMessage('Your PQC public key generated.', isError: false);
+        } else {
+          // Recipient set but fetch failed: don’t overwrite with my key
+          _showMessage('Recipient has no PQC key registered. Ask them to share theirs.', isError: true);
+        }
+      } else {
+        _showMessage('Failed to generate your PQC key pair.', isError: true);
+      }
+    } catch (e) {
+      _showMessage('PQC server not available. Please use OTP or AES encryption for now.', isError: true);
+    }
+  }
+
   Future<bool> _validateRecipient() async {
     final address = _toController.text.trim();
     if (address.isEmpty) {
@@ -89,8 +131,30 @@ class _ComposeScreenState extends State<ComposeScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // For PQC encryption, require explicit recipient public key (no fallback)
+      if (_selectedEncryptionMethod.startsWith('PQC')) {
+        // If recipient key missing, try to auto-fetch from backend
+        if (_recipientPublicKeyController.text.trim().isEmpty) {
+          final recipientEmail = _toController.text.trim();
+          if (recipientEmail.isNotEmpty) {
+            try {
+              final resp = await http.get(Uri.parse('http://localhost:5001/api/email/pqc/public-key/${Uri.encodeComponent(recipientEmail)}'));
+              if (resp.statusCode == 200) {
+                final data = jsonDecode(resp.body) as Map<String, dynamic>;
+                final pk = (data['data'] as Map<String, dynamic>)['publicKey'] as String;
+                setState(() { _recipientPublicKeyController.text = pk; });
+              }
+            } catch (_) {}
+          }
+          if (_recipientPublicKeyController.text.trim().isEmpty) {
+            _showMessage('Recipient has no PQC key registered. Ask them to share their key.', isError: true);
+            return;
+          }
+        }
+      }
+
       final success = await _emailService.sendEmail(
-        senderEmail: authProvider.user!.email,
+        senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
         recipientEmail: _toController.text.trim(),
         subject: _subjectController.text.trim(),
         body: _bodyController.text.trim(),
@@ -136,11 +200,12 @@ class _ComposeScreenState extends State<ComposeScreen> {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
         Widget formContent() {
-          return Padding(
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
             child: Form(
               key: _formKey,
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   TextField(
@@ -210,24 +275,76 @@ class _ComposeScreenState extends State<ComposeScreen> {
                               setState(() {
                                 _selectedEncryptionMethod = value!;
                               });
+                              // Auto-generate public key for PQC methods
+                              if (value!.startsWith('PQC')) {
+                                _generatePublicKey();
+                              }
                             },
                           ),
                           if (_selectedEncryptionMethod.startsWith('PQC')) ...[
                             const SizedBox(height: 16),
-                            TextFormField(
-                              controller: _recipientPublicKeyController,
-                              decoration: const InputDecoration(
-                                labelText: 'Recipient Public Key',
-                                prefixIcon: Icon(Icons.key),
-                                hintText: 'Enter recipient\'s PQC public key (Base64)',
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.shade50,
+                                border: Border.all(color: Colors.orange.shade200),
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                              maxLines: 3,
-                              validator: (value) {
-                                if (_selectedEncryptionMethod.startsWith('PQC') && (value == null || value.trim().isEmpty)) {
-                                  return 'Public key is required for PQC encryption';
-                                }
-                                return null;
-                              },
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'PQC encryption requires the server to be running. If key generation fails, use OTP or AES encryption instead.',
+                                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _recipientPublicKeyController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Recipient Public Key',
+                                      prefixIcon: Icon(Icons.key),
+                                      hintText: 'Auto-generated PQC public key',
+                                    ),
+                                    maxLines: 3,
+                                    readOnly: true,
+                                    validator: (value) {
+                                      if (_selectedEncryptionMethod.startsWith('PQC') && (value == null || value.trim().isEmpty)) {
+                                        return 'Public key is required for PQC encryption';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: _generatePublicKey,
+                                  icon: const Icon(Icons.refresh),
+                                  tooltip: 'Generate New Key',
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: () async {
+                                    final ok = await EmailService.initializePqcKeys();
+                                    if (ok && EmailService.pqcPublicKey != null) {
+                                      await Clipboard.setData(ClipboardData(text: EmailService.pqcPublicKey!));
+                                      _showMessage('Your PQC public key copied to clipboard', isError: false);
+                                    } else {
+                                      _showMessage('Failed to generate your PQC key', isError: true);
+                                    }
+                                  },
+                                  icon: const Icon(Icons.copy),
+                                  tooltip: 'Copy My Public Key',
+                                ),
+                              ],
                             ),
                           ],
                         ],
@@ -261,7 +378,10 @@ class _ComposeScreenState extends State<ComposeScreen> {
         }
 
         if (!isWide) {
-          return MobileScaffoldShell(title: 'Compose', body: formContent());
+          return MobileScaffoldShell(
+            title: 'Compose',
+            body: SingleChildScrollView(child: formContent()),
+          );
         }
 
         return Scaffold(

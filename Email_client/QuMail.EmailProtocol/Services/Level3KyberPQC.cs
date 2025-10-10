@@ -37,6 +37,12 @@ public class Level3KyberPQC
             var publicKeyBytes = publicKey.GetEncoded();
             var privateKeyBytes = privateKey.GetEncoded();
 
+            // Validate the generated keys
+            if (publicKeyBytes.Length != 800)
+            {
+                throw new InvalidOperationException($"Generated public key has wrong length: {publicKeyBytes.Length} bytes, expected 800 bytes");
+            }
+
             return new PQCKeyPair
             {
                 PublicKey = Convert.ToBase64String(publicKeyBytes),
@@ -63,7 +69,23 @@ public class Level3KyberPQC
         {
             // Decode public key
             var publicKeyBytes = Convert.FromBase64String(recipientPublicKey);
-            var publicKeyParams = new KyberPublicKeyParameters(KyberParams, publicKeyBytes);
+            
+            // Validate key length for Kyber-512 (should be 800 bytes)
+            if (publicKeyBytes.Length != 800)
+            {
+                throw new ArgumentException($"Invalid public key length: {publicKeyBytes.Length} bytes. Expected 800 bytes for Kyber-512.");
+            }
+            
+            // Create public key parameters - the issue might be in how we construct this
+            KyberPublicKeyParameters publicKeyParams;
+            try
+            {
+                publicKeyParams = new KyberPublicKeyParameters(KyberParams, publicKeyBytes);
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException($"Failed to create KyberPublicKeyParameters: {ex.Message}. Key length: {publicKeyBytes.Length} bytes. Inner: {ex.InnerException?.Message}", ex);
+            }
 
             // Initialize KEM for encapsulation
             var kem = new KyberKemGenerator(new SecureRandom());
@@ -85,7 +107,7 @@ public class Level3KyberPQC
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to encapsulate with PQC", ex);
+            throw new InvalidOperationException($"Failed to encapsulate with PQC: {ex.Message}. Inner: {ex.InnerException?.Message}. Stack: {ex.StackTrace}", ex);
         }
     }
 
@@ -147,6 +169,13 @@ public class Level3KyberPQC
         try
         {
             var publicKeyBytes = Convert.FromBase64String(publicKey);
+            
+            // Validate key length for Kyber-512 (should be 800 bytes)
+            if (publicKeyBytes.Length != 800)
+            {
+                return false;
+            }
+            
             _ = new KyberPublicKeyParameters(KyberParams, publicKeyBytes);
             return true;
         }

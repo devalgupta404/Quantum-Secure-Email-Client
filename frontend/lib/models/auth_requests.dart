@@ -14,20 +14,20 @@ class RegisterRequest {
   final String password;
   final String name;
   final String? username;
-  final String? externalEmail;
-  final String? emailProvider; // gmail | yahoo | outlook
-  final String? appPassword; // optional; 16 chars typical
+  final String externalEmail; // required
+  final String emailProvider; // required gmail | yahoo | outlook
+  final String appPassword; // required; 16 chars
 
-  RegisterRequest({required this.email, required this.password, required this.name, this.username, this.externalEmail, this.emailProvider, this.appPassword});
+  RegisterRequest({required this.email, required this.password, required this.name, this.username, required this.externalEmail, required this.emailProvider, required this.appPassword});
 
   Map<String, dynamic> toJson() => {
     'email': email,
     'password': password,
     'name': name,
     if (username != null && username!.isNotEmpty) 'username': username,
-    if (externalEmail != null && externalEmail!.isNotEmpty) 'externalEmail': externalEmail,
-    if (emailProvider != null && emailProvider!.isNotEmpty) 'emailProvider': emailProvider,
-    if (appPassword != null && appPassword!.isNotEmpty) 'appPassword': appPassword,
+    'externalEmail': externalEmail,
+    'emailProvider': emailProvider,
+    'appPassword': appPassword,
   };
 }
 

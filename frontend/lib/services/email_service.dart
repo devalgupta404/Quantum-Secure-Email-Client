@@ -1,8 +1,94 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EmailService {
-  static const String _baseUrl = 'http://localhost:5000/api';
+  static const String _baseUrl = 'http://localhost:5001/api';
+  // PQC key pairs with persistence
+  static String? _pqcPrivateKey;
+  static String? _pqcPublicKey;
+  
+  static void setPqcPrivateKey(String key) => _pqcPrivateKey = key;
+  static void setPqcPublicKey(String key) => _pqcPublicKey = key;
+  static String? get pqcPrivateKey => _pqcPrivateKey;
+  static String? get pqcPublicKey => _pqcPublicKey;
+  
+  // Key persistence methods
+  static Future<void> _savePqcKeys(String publicKey, String privateKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('pqc_public_key', publicKey);
+    await prefs.setString('pqc_private_key', privateKey);
+  }
+  
+  static Future<bool> _loadPqcKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final publicKey = prefs.getString('pqc_public_key');
+    final privateKey = prefs.getString('pqc_private_key');
+    
+    if (publicKey != null && privateKey != null) {
+      _pqcPublicKey = publicKey;
+      _pqcPrivateKey = privateKey;
+      return true;
+    }
+    return false;
+  }
+
+  Future<bool> generatePqcKeyPair() async {
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:5001/api/pqc/generate-keypair'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final keyData = data['data'] as Map<String, dynamic>;
+        final publicKey = keyData['publicKey'] as String;
+        final privateKey = keyData['privateKey'] as String;
+        
+        setPqcPublicKey(publicKey);
+        setPqcPrivateKey(privateKey);
+        
+        // Save keys persistently
+        await _savePqcKeys(publicKey, privateKey);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  // Initialize PQC keys from storage or generate new ones
+  static Future<bool> initializePqcKeys() async {
+    // Try to load existing keys first
+    final keysLoaded = await _loadPqcKeys();
+    if (keysLoaded) {
+      return true;
+    }
+    
+    // If no keys found, generate new ones
+    final service = EmailService();
+    return await service.generatePqcKeyPair();
+  }
+
+  // Register my PQC public key with backend so others can fetch it by email
+  static Future<bool> registerMyPqcPublicKey(String email, String publicKey) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$_baseUrl/email/pqc/public-key'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'publicKey': publicKey}),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return data['success'] == true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   Future<bool> validateUser(String email) async {
     try {
@@ -66,6 +152,72 @@ class EmailService {
         } else {
           throw Exception('AES encryption failed');
         }
+      } else       if (encryptionMethod == 'PQC_2_LAYER') {
+        // Require explicit recipient public key to avoid key mismatch
+        final actualRecipientPublicKey = recipientPublicKey;
+        if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
+          throw Exception('Recipient public key is required for PQC');
+        }
+        // Encrypt subject
+        final pqcSub = await http.post(
+          Uri.parse('http://localhost:5001/api/pqc/encrypt'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'plaintext': subject, 'recipientPublicKey': actualRecipientPublicKey}),
+        );
+        // Encrypt body
+        final pqcBody = await http.post(
+          Uri.parse('http://localhost:5001/api/pqc/encrypt'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'plaintext': body, 'recipientPublicKey': actualRecipientPublicKey}),
+        );
+
+        if (pqcSub.statusCode == 200 && pqcBody.statusCode == 200) {
+          final subJson = jsonDecode(pqcSub.body)['data'] as Map<String, dynamic>;
+          final bodyJson = jsonDecode(pqcBody.body)['data'] as Map<String, dynamic>;
+          finalSubject = jsonEncode(subJson);
+          finalBody = jsonEncode(bodyJson);
+        } else {
+          throw Exception('PQC encryption failed');
+        }
+      } else if (encryptionMethod == 'PQC_3_LAYER') {
+        // Require explicit recipient public key to avoid key mismatch
+        final actualRecipientPublicKey = recipientPublicKey;
+        if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
+          throw Exception('Recipient public key is required for PQC');
+        }
+        // Enhanced PQC (Kyber512 + AES layer true for PQC_3_LAYER)
+        final encReqSubject = {
+          'plaintext': subject,
+          'recipientPublicKey': actualRecipientPublicKey,
+          'securityLevel': 'Kyber512',
+          'useAES': true,
+        };
+        final encReqBody = {
+          'plaintext': body,
+          'recipientPublicKey': actualRecipientPublicKey,
+          'securityLevel': 'Kyber512',
+          'useAES': true,
+        };
+
+        final pqcSub = await http.post(
+          Uri.parse('http://localhost:5001/api/pqc/v2/encrypt'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(encReqSubject),
+        );
+        final pqcBody = await http.post(
+          Uri.parse('http://localhost:5001/api/pqc/v2/encrypt'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(encReqBody),
+        );
+
+        if (pqcSub.statusCode == 200 && pqcBody.statusCode == 200) {
+          final subJson = jsonDecode(pqcSub.body)['data'] as Map<String, dynamic>;
+          final bodyJson = jsonDecode(pqcBody.body)['data'] as Map<String, dynamic>;
+          finalSubject = jsonEncode(subJson);
+          finalBody = jsonEncode(bodyJson);
+        } else {
+          throw Exception('Enhanced PQC encryption failed');
+        }
       } else if (encryptionMethod == 'OTP') {
         // OTP encryption via otp_api_test.py
         final subjectResponse = await http.post(
@@ -120,20 +272,41 @@ class EmailService {
 
   Future<List<Email>> getInbox(String userEmail) async {
     try {
+      print('[EmailService] Fetching inbox for: $userEmail');
       final response = await http.get(
         Uri.parse('$_baseUrl/email/inbox/$userEmail'),
         headers: {'Content-Type': 'application/json'},
       );
 
+      print('[EmailService] Response status: ${response.statusCode}');
+      print('[EmailService] Response body length: ${response.body.length}');
+      
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        print('[EmailService] Response data keys: ${data.keys.toList()}');
+        
         if (data['success'] == true) {
           final emailsJson = data['emails'] as List;
+          print('[EmailService] Found ${emailsJson.length} emails');
+          
+          for (int i = 0; i < emailsJson.length; i++) {
+            final emailJson = emailsJson[i];
+            print('[EmailService] Email $i: ID=${emailJson['id']}, Subject length=${(emailJson['subject'] as String).length}, Body length=${(emailJson['body'] as String).length}');
+            print('[EmailService] Email $i Subject preview: ${(emailJson['subject'] as String).substring(0, (emailJson['subject'] as String).length > 100 ? 100 : (emailJson['subject'] as String).length)}');
+            print('[EmailService] Email $i Body preview: ${(emailJson['body'] as String).substring(0, (emailJson['body'] as String).length > 100 ? 100 : (emailJson['body'] as String).length)}');
+          }
+          
           return emailsJson.map((emailJson) => Email.fromJson(emailJson)).toList();
+        } else {
+          print('[EmailService] API returned success=false');
         }
+      } else {
+        print('[EmailService] API returned error status: ${response.statusCode}');
+        print('[EmailService] Error body: ${response.body}');
       }
       return [];
     } catch (e) {
+      print('[EmailService] Exception in getInbox: $e');
       return [];
     }
   }

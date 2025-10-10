@@ -111,7 +111,9 @@ public class PQCController : ControllerBase
             return BadRequest(new
             {
                 success = false,
-                message = $"Failed to encrypt email: {ex.Message}"
+                message = $"Failed to encrypt email: {ex.Message}",
+                innerException = ex.InnerException?.Message,
+                stackTrace = ex.StackTrace
             });
         }
     }

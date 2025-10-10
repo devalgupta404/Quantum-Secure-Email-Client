@@ -29,7 +29,7 @@ class SettingsScreen extends StatelessWidget {
                 const SizedBox(width: 16),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(authProvider.user?.name ?? 'User', style: Theme.of(context).textTheme.titleLarge),
-                  Text(authProvider.user?.email ?? 'user@example.com', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
+                  Text(authProvider.user?.externalEmail ?? authProvider.user?.email ?? 'user@example.com', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
                 ])),
               ]),
             ),
