@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using QuMail.EmailProtocol.Data;
@@ -11,9 +12,11 @@ using QuMail.EmailProtocol.Data;
 namespace QuMail.EmailProtocol.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    partial class AuthDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251007081103_AddEmailAttachments")]
+    partial class AddEmailAttachments
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -34,13 +37,6 @@ namespace QuMail.EmailProtocol.Migrations
                     b.Property<string>("Body")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<string>("EncryptionMethod")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasDefaultValue("OTP");
 
                     b.Property<bool>("IsRead")
                         .ValueGeneratedOnAdd()

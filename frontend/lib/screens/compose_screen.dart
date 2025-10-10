@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import '../app.dart';
 import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
@@ -16,58 +18,59 @@ class _ComposeScreenState extends State<ComposeScreen> {
   final TextEditingController _toController = TextEditingController();
   final TextEditingController _subjectController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
+  final TextEditingController _recipientPublicKeyController = TextEditingController();
   final EmailService _emailService = EmailService();
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   bool _isValidatingRecipient = false;
   String? _recipientValidationMessage;
+  final List<SendAttachment> _attachments = [];
+  String _selectedEncryptionMethod = 'OTP';
 
   @override
   void dispose() {
     _toController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
+    _recipientPublicKeyController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickAttachments() async {
+    final result = await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+    if (result == null) return;
+    setState(() {
+      _attachments.clear();
+      for (final f in result.files) {
+        if (f.bytes == null) continue;
+        final b64 = base64Encode(f.bytes!);
+        _attachments.add(SendAttachment(fileName: f.name, contentType: 'application/octet-stream', contentBase64: b64));
+      }
+    });
   }
 
   Future<bool> _validateRecipient() async {
     final address = _toController.text.trim();
     if (address.isEmpty) {
-      setState(() {
-        _recipientValidationMessage = 'Please enter recipient email';
-      });
+      setState(() { _recipientValidationMessage = 'Please enter recipient email'; });
       return false;
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.user?.email == address) {
-      setState(() {
-        _recipientValidationMessage = 'You cannot send emails to yourself';
-      });
+      setState(() { _recipientValidationMessage = 'You cannot send emails to yourself'; });
       return false;
     }
 
-    setState(() {
-      _isValidatingRecipient = true;
-      _recipientValidationMessage = null;
-    });
+    setState(() { _isValidatingRecipient = true; _recipientValidationMessage = null; });
 
     try {
       final exists = await _emailService.validateUser(address);
-      if (exists) {
-        setState(() {
-          _recipientValidationMessage = null;
-        });
-        return true;
-      }
-      setState(() {
-        _recipientValidationMessage = 'User not found. They need to sign up first.';
-      });
+      if (exists) { setState(() { _recipientValidationMessage = null; }); return true; }
+      setState(() { _recipientValidationMessage = 'User not found. They need to sign up first.'; });
       return false;
     } catch (e) {
-      setState(() {
-        _recipientValidationMessage = 'Error validating user: ${e.toString()}';
-      });
+      setState(() { _recipientValidationMessage = 'Error validating user: ${e.toString()}'; });
       return false;
     } finally {
       setState(() => _isValidatingRecipient = false);
@@ -75,19 +78,13 @@ class _ComposeScreenState extends State<ComposeScreen> {
   }
 
   Future<void> _sendEmail() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
-    // Validate recipient on send
     final recipientOk = await _validateRecipient();
     if (!recipientOk) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (authProvider.user == null) {
-      _showMessage('Please login first', isError: true);
-      return;
-    }
+    if (authProvider.user == null) { _showMessage('Please login first', isError: true); return; }
 
     setState(() => _isLoading = true);
 
@@ -97,17 +94,15 @@ class _ComposeScreenState extends State<ComposeScreen> {
         recipientEmail: _toController.text.trim(),
         subject: _subjectController.text.trim(),
         body: _bodyController.text.trim(),
+        attachments: _attachments,
+        encryptionMethod: _selectedEncryptionMethod,
+        recipientPublicKey: _selectedEncryptionMethod.startsWith('PQC') ? _recipientPublicKeyController.text.trim() : null,
       );
 
       if (success) {
         _showMessage('📧 Email sent successfully!', isError: false);
         _clearForm();
-        // Navigate to Sent screen after successful send
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false);
-          }
-        });
+        Future.delayed(const Duration(seconds: 1), () { if (mounted) { Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false); } });
       } else {
         _showMessage('Failed to send email', isError: true);
       }
@@ -119,35 +114,35 @@ class _ComposeScreenState extends State<ComposeScreen> {
   }
 
   void _showMessage(String message, {required bool isError}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-      ),
-    );
+    final snackBar = SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green);
+    ScaffoldMessenger.of(context).showSnackBar(snackBar);
   }
 
   void _clearForm() {
     _toController.clear();
     _subjectController.clear();
     _bodyController.clear();
+    _recipientPublicKeyController.clear();
+    setState(() { 
+      _attachments.clear(); 
+      _selectedEncryptionMethod = 'OTP';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= 1000;
+
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
-        final isWide = MediaQuery.of(context).size.width >= 1000;
-
         Widget formContent() {
           return Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16.0),
             child: Form(
               key: _formKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  // From field (read-only, shows current user)
                   TextField(
                     decoration: InputDecoration(
                       labelText: 'From',
@@ -158,8 +153,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
                     style: TextStyle(color: Colors.grey.shade600),
                   ),
                   const SizedBox(height: 16),
-                  
-                  // To field with validation (validation occurs on send)
                   TextFormField(
                     controller: _toController,
                     decoration: const InputDecoration(
@@ -169,116 +162,97 @@ class _ComposeScreenState extends State<ComposeScreen> {
                     keyboardType: TextInputType.emailAddress,
                     enabled: !_isLoading && !_isValidatingRecipient,
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter recipient email';
-                      }
-                      if (!RegExp(r'^[\w\.-]+@([\w-]+\.)+[A-Za-z]{2,}$').hasMatch(value.trim())) {
-                        return 'Please enter a valid email';
-                      }
+                      if (value == null || value.trim().isEmpty) return 'Please enter recipient email';
+                      if (!RegExp(r'^[\w\.-]+@([\w-]+\.)+[A-Za-z]{2,}$').hasMatch(value.trim())) return 'Please enter a valid email';
                       return null;
                     },
                   ),
                   if (_recipientValidationMessage != null)
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.orange.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _recipientValidationMessage!,
-                              style: TextStyle(
-                                color: Colors.orange.shade700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(_recipientValidationMessage!, style: const TextStyle(color: Colors.red)),
                     ),
-          
                   const SizedBox(height: 16),
-                  
-                  // Subject field
                   TextFormField(
                     controller: _subjectController,
-                    decoration: const InputDecoration(
-                      labelText: 'Subject',
-                      prefixIcon: Icon(Icons.subject),
-                    ),
-                    enabled: !_isLoading,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter a subject';
-                      }
-                      return null;
-                    },
+                    decoration: const InputDecoration(labelText: 'Subject', prefixIcon: Icon(Icons.subject_outlined)),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _bodyController,
+                    decoration: const InputDecoration(labelText: 'Body', alignLabelWithHint: true),
+                    maxLines: 8,
                   ),
                   const SizedBox(height: 16),
                   
-                  // Message body
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.all(8),
-                      child: Row(
+                  // Encryption Method Selection
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.only(top: 12, left: 4, right: 8),
-                            child: Icon(Icons.message_outlined, color: Colors.grey.shade700),
+                          const Text('Encryption Method', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<String>(
+                            value: _selectedEncryptionMethod,
+                            decoration: const InputDecoration(
+                              labelText: 'Select Encryption Method',
+                              prefixIcon: Icon(Icons.security),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'OTP', child: Text('OTP (One-Time Pad)')),
+                              DropdownMenuItem(value: 'AES', child: Text('AES-256-GCM')),
+                              DropdownMenuItem(value: 'PQC_2_LAYER', child: Text('PQC 2-Layer (Kyber-512 + OTP)')),
+                              DropdownMenuItem(value: 'PQC_3_LAYER', child: Text('PQC 3-Layer (Kyber-1024 + AES-256 + OTP)')),
+                            ],
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedEncryptionMethod = value!;
+                              });
+                            },
                           ),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _bodyController,
+                          if (_selectedEncryptionMethod.startsWith('PQC')) ...[
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _recipientPublicKeyController,
                               decoration: const InputDecoration(
-                                labelText: 'Message',
-                                border: InputBorder.none,
-                                alignLabelWithHint: true,
+                                labelText: 'Recipient Public Key',
+                                prefixIcon: Icon(Icons.key),
+                                hintText: 'Enter recipient\'s PQC public key (Base64)',
                               ),
-                              maxLines: null,
-                              expands: true,
-                              textAlignVertical: TextAlignVertical.top,
-                              enabled: !_isLoading,
+                              maxLines: 3,
                               validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Please enter a message';
+                                if (_selectedEncryptionMethod.startsWith('PQC') && (value == null || value.trim().isEmpty)) {
+                                  return 'Public key is required for PQC encryption';
                                 }
                                 return null;
                               },
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 16),
-                  
-                  // Send button
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _isLoading ? null : _pickAttachments,
+                        icon: const Icon(Icons.attach_file),
+                        label: const Text('Add Attachments'),
+                      ),
+                      ..._attachments.map((a) => Chip(label: Text(a.fileName))).toList(),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
                   ElevatedButton.icon(
                     onPressed: _isLoading ? null : _sendEmail,
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send),
+                    icon: _isLoading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send),
                     label: Text(_isLoading ? 'Sending...' : 'Send Email'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
+                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                   ),
                 ],
               ),
@@ -305,12 +279,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const InboxSidebar(active: 'compose'),
-                    Expanded(
-                      child: Container(
-                        color: Colors.white,
-                        child: formContent(),
-                      ),
-                    ),
+                    Expanded(child: Container(color: Colors.white, child: formContent())),
                   ],
                 ),
               ),

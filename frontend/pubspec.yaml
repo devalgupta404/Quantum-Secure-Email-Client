@@ -46,6 +46,10 @@ dependencies:
   # Form validation
   email_validator: ^2.1.17
 
+  # File picking for attachments
+  file_picker: ^8.1.2
+  file_saver: ^0.2.12
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8

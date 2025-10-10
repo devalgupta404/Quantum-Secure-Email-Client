@@ -82,6 +82,8 @@ public class AuthDbContext : DbContext
                 entity.Property(e => e.RecipientEmail).IsRequired().HasMaxLength(255);
                 entity.Property(e => e.Subject).IsRequired().HasMaxLength(500);
                 entity.Property(e => e.Body).IsRequired();
+                entity.Property(e => e.EncryptionMethod).IsRequired().HasMaxLength(50).HasDefaultValue("OTP");
+                entity.Property(e => e.Attachments).HasColumnType("text");
                 entity.Property(e => e.SentAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.IsRead).HasDefaultValue(false);
 
