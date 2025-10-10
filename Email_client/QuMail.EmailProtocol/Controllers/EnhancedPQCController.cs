@@ -160,6 +160,7 @@ public class EnhancedPQCController : ControllerBase
             var decrypted = _hybridEncryption.Decrypt(
                 request.EncryptedBody,
                 request.PQCCiphertext,
+                request.EncryptedKeyId,
                 request.PrivateKey,
                 request.Algorithm,
                 request.UsedAES);
@@ -419,6 +420,7 @@ public class EnhancedPQCController : ControllerBase
                 var decrypted1 = _hybridEncryption.Decrypt(
                     encrypted1.EncryptedBody,
                     encrypted1.PQCCiphertext,
+                    encrypted1.EncryptedKeyId,
                     keyPair.PrivateKey,
                     encrypted1.Algorithm,
                     false);
@@ -428,6 +430,7 @@ public class EnhancedPQCController : ControllerBase
                 var decrypted2 = _hybridEncryption.Decrypt(
                     encrypted2.EncryptedBody,
                     encrypted2.PQCCiphertext,
+                    encrypted2.EncryptedKeyId,
                     keyPair.PrivateKey,
                     encrypted2.Algorithm,
                     true);
@@ -480,6 +483,7 @@ public class EnhancedDecryptRequest
 {
     public string EncryptedBody { get; set; } = string.Empty;
     public string PQCCiphertext { get; set; } = string.Empty;
+    public string EncryptedKeyId { get; set; } = string.Empty; // NEW: Required for KeyManager
     public string PrivateKey { get; set; } = string.Empty;
     public string Algorithm { get; set; } = string.Empty;
     public bool UsedAES { get; set; } = true;

@@ -44,6 +44,9 @@ var jwtAudience = Environment.GetEnvironmentVariable("JWT_AUDIENCE");
 // Add services
 builder.Services.AddControllers();
 
+// Register Key Manager (IMPORTANT: Required for PQC)
+builder.Services.AddSingleton<IQuantumKeyManager, SecureKeyManager>();
+
 // Register Level 3 PQC services (original)
 builder.Services.AddSingleton<Level3KyberPQC>();
 builder.Services.AddScoped<IOneTimePadEngine, Level1OneTimePadEngine>();

@@ -156,6 +156,7 @@ public class PQCController : ControllerBase
             var decrypted = _pqcEmailService.DecryptEmail(
                 request.EncryptedBody,
                 request.PQCCiphertext,
+                request.EncryptedKeyId,
                 request.PrivateKey);
 
             return Ok(new
@@ -321,6 +322,7 @@ public class PQCController : ControllerBase
             var decrypted = _pqcEmailService.DecryptEmail(
                 encrypted.EncryptedBody,
                 encrypted.PQCCiphertext,
+                encrypted.EncryptedKeyId,
                 keyPair.PrivateKey);
 
             var success = testMessage == decrypted;
@@ -365,6 +367,7 @@ public class PQCDecryptRequest
 {
     public string EncryptedBody { get; set; } = string.Empty;
     public string PQCCiphertext { get; set; } = string.Empty;
+    public string EncryptedKeyId { get; set; } = string.Empty; // NEW: Required for KeyManager
     public string PrivateKey { get; set; } = string.Empty;
 }
 

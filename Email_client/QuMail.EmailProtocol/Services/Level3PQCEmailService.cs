@@ -4,34 +4,45 @@ using System.Text;
 namespace QuMail.EmailProtocol.Services;
 
 /// <summary>
-/// Level 3 PQC Email Service
-/// Combines CRYSTALS-Kyber post-quantum key exchange with existing OTP encryption
+/// Level 3 PQC Email Service with KeyManager Integration (CORRECTED)
+/// Combines CRYSTALS-Kyber post-quantum key exchange with KeyManager for proper key management
 ///
-/// FLOW:
-/// 1. Sender performs Kyber encapsulation with recipient's public key → gets shared secret + ciphertext
-/// 2. Shared secret (32 bytes) is used as the OTP key to encrypt the email body
-/// 3. Encrypted email + PQC ciphertext are sent together
-/// 4. Receiver uses their private key to decapsulate → recovers shared secret
-/// 5. Shared secret decrypts the email using OTP
+/// FLOW (CORRECTED):
+/// ENCRYPTION:
+/// 1. Generate keyId and get quantum key from KeyManager
+/// 2. Encrypt keyId using PQC (Kyber) shared secret
+/// 3. Encrypt email body using quantum key from KeyManager
+/// 4. Send: encrypted body + PQC ciphertext + encrypted keyId
+///
+/// DECRYPTION:
+/// 1. Receiver uses their private key to decapsulate PQC ciphertext → recovers shared secret
+/// 2. Decrypt keyId using PQC shared secret
+/// 3. Fetch same quantum key from KeyManager using keyId
+/// 4. Decrypt email body using quantum key
 /// </summary>
 public class Level3PQCEmailService
 {
     private readonly Level3KyberPQC _kyberPQC;
     private readonly IOneTimePadEngine _otpEngine;
+    private readonly IQuantumKeyManager _keyManager;
 
-    public Level3PQCEmailService(Level3KyberPQC kyberPQC, IOneTimePadEngine otpEngine)
+    public Level3PQCEmailService(
+        Level3KyberPQC kyberPQC,
+        IOneTimePadEngine otpEngine,
+        IQuantumKeyManager keyManager)
     {
         _kyberPQC = kyberPQC ?? throw new ArgumentNullException(nameof(kyberPQC));
         _otpEngine = otpEngine ?? throw new ArgumentNullException(nameof(otpEngine));
+        _keyManager = keyManager ?? throw new ArgumentNullException(nameof(keyManager));
     }
 
     /// <summary>
-    /// Encrypts an email using PQC + OTP hybrid encryption
+    /// Encrypts an email using PQC + OTP with KeyManager (CORRECTED)
     /// </summary>
     /// <param name="plaintext">Email body to encrypt</param>
     /// <param name="recipientPublicKey">Recipient's PQC public key (Base64)</param>
     /// <returns>Encrypted email result with ciphertext and PQC data</returns>
-    public PQCEncryptedEmail EncryptEmail(string plaintext, string recipientPublicKey)
+    public async Task<PQCEncryptedEmail> EncryptEmailAsync(string plaintext, string recipientPublicKey)
     {
         try
         {
@@ -41,27 +52,32 @@ public class Level3PQCEmailService
                 throw new ArgumentException("Invalid recipient public key", nameof(recipientPublicKey));
             }
 
-            // Step 2: Perform Kyber encapsulation to get shared secret + ciphertext
-            var encapsulation = _kyberPQC.Encapsulate(recipientPublicKey);
-
-            // Step 3: Convert shared secret to bytes (this will be our OTP key)
-            var otpKey = Convert.FromBase64String(encapsulation.SharedSecret);
-
-            // Step 4: Convert plaintext to bytes
             var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
 
-            // Step 5: Expand OTP key to match plaintext length if needed
-            var expandedKey = ExpandKey(otpKey, plaintextBytes.Length);
-
-            // Step 6: Encrypt using existing OTP engine (XOR encryption)
+            // Step 2: Generate keyId and get quantum key from KeyManager
             var keyId = GenerateKeyId();
-            var encryptionResult = _otpEngine.Encrypt(plaintextBytes, expandedKey, keyId);
+            var quantumKey = await _keyManager.GetKeyAsync(keyId, plaintextBytes.Length);
+
+            // Step 3: Perform Kyber encapsulation to get shared secret
+            var encapsulation = _kyberPQC.Encapsulate(recipientPublicKey);
+            var pqcSharedSecret = Convert.FromBase64String(encapsulation.SharedSecret);
+
+            // Step 4: Encrypt the keyId using PQC shared secret (so receiver can retrieve same key)
+            var keyIdBytes = Encoding.UTF8.GetBytes(keyId);
+            var encryptedKeyId = XorBytes(keyIdBytes, pqcSharedSecret.Take(keyIdBytes.Length).ToArray());
+
+            // Step 5: Encrypt email body using quantum key from KeyManager
+            var encryptionResult = _otpEngine.Encrypt(plaintextBytes, quantumKey.Data.Take(plaintextBytes.Length).ToArray(), keyId);
+
+            // Step 6: Mark key as used
+            await _keyManager.MarkKeyAsUsedAsync(keyId, plaintextBytes.Length);
 
             // Step 7: Return encrypted email with PQC metadata
             return new PQCEncryptedEmail
             {
                 EncryptedBody = Convert.ToBase64String(encryptionResult.EncryptedData),
                 PQCCiphertext = encapsulation.Ciphertext, // Kyber ciphertext for receiver
+                EncryptedKeyId = Convert.ToBase64String(encryptedKeyId), // NEW: encrypted keyId
                 Algorithm = "Kyber512-OTP",
                 KeyId = keyId,
                 EncryptedAt = DateTime.UtcNow
@@ -73,39 +89,64 @@ public class Level3PQCEmailService
         }
     }
 
+    // Keep synchronous version for backward compatibility
+    public PQCEncryptedEmail EncryptEmail(string plaintext, string recipientPublicKey)
+    {
+        return EncryptEmailAsync(plaintext, recipientPublicKey).GetAwaiter().GetResult();
+    }
+
     /// <summary>
-    /// Decrypts an email that was encrypted with PQC + OTP
+    /// Decrypts an email that was encrypted with PQC + OTP using KeyManager (CORRECTED)
     /// </summary>
     /// <param name="encryptedBody">Base64-encoded encrypted email body</param>
     /// <param name="pqcCiphertext">Base64-encoded Kyber ciphertext</param>
+    /// <param name="encryptedKeyId">Base64-encoded encrypted keyId</param>
     /// <param name="privateKey">Recipient's private key (Base64)</param>
     /// <returns>Decrypted email plaintext</returns>
-    public string DecryptEmail(string encryptedBody, string pqcCiphertext, string privateKey)
+    public async Task<string> DecryptEmailAsync(string encryptedBody, string pqcCiphertext, string encryptedKeyId, string privateKey)
     {
         try
         {
             // Step 1: Perform Kyber decapsulation to recover shared secret
             var sharedSecretBase64 = _kyberPQC.Decapsulate(pqcCiphertext, privateKey);
+            var pqcSharedSecret = Convert.FromBase64String(sharedSecretBase64);
 
-            // Step 2: Convert shared secret to bytes (this is our OTP key)
-            var otpKey = Convert.FromBase64String(sharedSecretBase64);
+            // Step 2: Decrypt the keyId using PQC shared secret
+            var encryptedKeyIdBytes = Convert.FromBase64String(encryptedKeyId);
+            var keyIdBytes = XorBytes(encryptedKeyIdBytes, pqcSharedSecret.Take(encryptedKeyIdBytes.Length).ToArray());
+            var keyId = Encoding.UTF8.GetString(keyIdBytes);
 
-            // Step 3: Convert encrypted body to bytes
+            // Step 3: Retrieve the quantum key from KeyManager using keyId
             var encryptedBytes = Convert.FromBase64String(encryptedBody);
+            var quantumKey = await _keyManager.GetKeyAsync(keyId, encryptedBytes.Length);
 
-            // Step 4: Expand OTP key to match ciphertext length
-            var expandedKey = ExpandKey(otpKey, encryptedBytes.Length);
+            // Step 4: Decrypt using quantum key from KeyManager
+            var decryptedBytes = _otpEngine.Decrypt(encryptedBytes, quantumKey.Data.Take(encryptedBytes.Length).ToArray());
 
-            // Step 5: Decrypt using existing OTP engine (XOR decryption)
-            var decryptedBytes = _otpEngine.Decrypt(encryptedBytes, expandedKey);
-
-            // Step 6: Convert back to string
+            // Step 5: Convert back to string
             return Encoding.UTF8.GetString(decryptedBytes);
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException("Failed to decrypt email with PQC", ex);
         }
+    }
+
+    // Keep synchronous version for backward compatibility
+    public string DecryptEmail(string encryptedBody, string pqcCiphertext, string encryptedKeyId, string privateKey)
+    {
+        return DecryptEmailAsync(encryptedBody, pqcCiphertext, encryptedKeyId, privateKey).GetAwaiter().GetResult();
+    }
+
+    // Helper method for XOR operation
+    private byte[] XorBytes(byte[] data, byte[] key)
+    {
+        var result = new byte[data.Length];
+        for (int i = 0; i < data.Length; i++)
+        {
+            result[i] = (byte)(data[i] ^ key[i]);
+        }
+        return result;
     }
 
     /// <summary>
@@ -206,6 +247,11 @@ public class PQCEncryptedEmail
     /// This is what the receiver uses with their private key to decrypt
     /// </summary>
     public string PQCCiphertext { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Encrypted keyId (Base64) - receiver decrypts this to get keyId for KeyManager
+    /// </summary>
+    public string EncryptedKeyId { get; set; } = string.Empty;
 
     /// <summary>
     /// Algorithm identifier
