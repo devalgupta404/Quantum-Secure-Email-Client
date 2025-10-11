@@ -168,11 +168,11 @@ def encrypt_gcm():
         return jsonify({"error": "parse_failed", "stdout": lines}), 500
 
     return jsonify({
-        "key_id": key_id,
-        "iv_hex": iv_hex,
-        "ciphertext_hex": ct_hex if ct_hex is not None else "",
-        "tag_hex": tag_hex,
-        "aad_hex": aad_hex
+        "keyId": key_id,
+        "ivHex": iv_hex,
+        "ciphertextHex": ct_hex if ct_hex is not None else "",
+        "tagHex": tag_hex,
+        "aadHex": aad_hex
     })
 
 
@@ -205,4 +205,4 @@ def decrypt_gcm():
 
 if __name__ == "__main__":
     import os
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8082")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))

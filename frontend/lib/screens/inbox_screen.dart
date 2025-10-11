@@ -169,7 +169,7 @@ class _InboxScreenState extends State<InboxScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(email.subject),
+        title: Text(_extractPlaintext(email.subject)),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,7 +185,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 style: TextStyle(color: Colors.grey.shade600),
               ),
               const SizedBox(height: 16),
-              Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : email.body),
+              Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : _extractPlaintext(email.body)),
               const SizedBox(height: 16),
               if (email.attachments.isNotEmpty) ...[
                 const Text('Attachments', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -282,7 +282,22 @@ class _InboxScreenState extends State<InboxScreen> {
 
   String _getPreview(String body) {
     if (_isOtpEnvelope(body)) return 'Encrypted message';
-    return body.length > 100 ? '${body.substring(0, 100)}...' : body;
+    final cleanBody = _extractPlaintext(body);
+    return cleanBody.length > 100 ? '${cleanBody.substring(0, 100)}...' : cleanBody;
+  }
+
+  String _extractPlaintext(String content) {
+    try {
+      // Check if it's a JSON response with plaintext
+      if (content.startsWith('{') && content.contains('"plaintext"')) {
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        return json['plaintext'] ?? content;
+      }
+      return content;
+    } catch (e) {
+      // If JSON parsing fails, return original content
+      return content;
+    }
   }
 
   bool _isImage(String contentType, String fileName) {
@@ -577,7 +592,7 @@ class _InboxScreenState extends State<InboxScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      email.subject,
+                                      _extractPlaintext(email.subject),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
@@ -653,7 +668,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      email.subject,
+                      _extractPlaintext(email.subject),
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 8),
@@ -686,7 +701,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : email.body),
+                      Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : _extractPlaintext(email.body)),
                       const SizedBox(height: 16),
                       if (email.attachments.isNotEmpty) ...[
                         const Text('Attachments', style: TextStyle(fontWeight: FontWeight.bold)),

@@ -636,9 +636,31 @@ public class EmailController : ControllerBase
             
             if (response.IsSuccessStatusCode)
             {
-                var decryptedBytes = await response.Content.ReadAsByteArrayAsync();
-                _logger.LogInformation("AES decryption successful, decrypted {BytesCount} bytes", decryptedBytes.Length);
-                return Encoding.UTF8.GetString(decryptedBytes);
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                _logger.LogInformation("AES decrypt response content type: {ContentType}", contentType);
+                
+                var responseContent = await response.Content.ReadAsStringAsync();
+                _logger.LogInformation("AES decrypt raw response: {Response}", responseContent);
+                
+                // Try to parse as JSON first (in case it's wrapped)
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(responseContent);
+                    if (jsonDoc.RootElement.TryGetProperty("plaintext", out var plaintextElement))
+                    {
+                        var plaintext = plaintextElement.GetString();
+                        _logger.LogInformation("AES decryption successful, extracted plaintext from JSON: {Plaintext}", plaintext);
+                        return plaintext ?? string.Empty;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Not JSON, treat as raw text
+                }
+                
+                // If not JSON or no plaintext property, return the raw content
+                _logger.LogInformation("AES decryption successful, returning raw content: {Content}", responseContent);
+                return responseContent;
             }
             
             var errorContent = await response.Content.ReadAsStringAsync();
@@ -678,39 +700,56 @@ public class EmailController : ControllerBase
         {
             _logger.LogInformation($"TryParseAESEnvelope: Attempting to parse body: {body}");
             
+            // First try to parse as camelCase (new format)
             var parsed = JsonSerializer.Deserialize<AESEnvelope>(body, _jsonOptions);
-            if (parsed == null)
+            if (parsed != null && !string.IsNullOrWhiteSpace(parsed.KeyId) && !string.IsNullOrWhiteSpace(parsed.CiphertextHex))
             {
-                _logger.LogInformation("TryParseAESEnvelope: Parsed result is null");
-                return false;
+                _logger.LogInformation($"TryParseAESEnvelope: Success with camelCase format - KeyId: {parsed.KeyId}, IvHex: {parsed.IvHex}, CiphertextHex: {parsed.CiphertextHex}, TagHex: {parsed.TagHex}");
+                envelope = parsed;
+                return true;
             }
             
-            _logger.LogInformation($"TryParseAESEnvelope: Parsed - KeyId: {parsed.KeyId}, IvHex: {parsed.IvHex}, CiphertextHex: {parsed.CiphertextHex}, TagHex: {parsed.TagHex}, Algorithm: {parsed.Algorithm}");
+            // If camelCase failed, try to parse as snake_case (old format) and convert
+            var jsonDoc = JsonDocument.Parse(body);
+            var root = jsonDoc.RootElement;
             
-            if (string.IsNullOrWhiteSpace(parsed.KeyId) || string.IsNullOrWhiteSpace(parsed.CiphertextHex))
+            var keyId = root.TryGetProperty("keyId", out var kidCamel) ? kidCamel.GetString() : 
+                       (root.TryGetProperty("key_id", out var kidSnake) ? kidSnake.GetString() : null);
+            var ivHex = root.TryGetProperty("ivHex", out var ivCamel) ? ivCamel.GetString() : 
+                       (root.TryGetProperty("iv_hex", out var ivSnake) ? ivSnake.GetString() : null);
+            var ciphertextHex = root.TryGetProperty("ciphertextHex", out var ctCamel) ? ctCamel.GetString() : 
+                               (root.TryGetProperty("ciphertext_hex", out var ctSnake) ? ctSnake.GetString() : null);
+            var tagHex = root.TryGetProperty("tagHex", out var tagCamel) ? tagCamel.GetString() : 
+                        (root.TryGetProperty("tag_hex", out var tagSnake) ? tagSnake.GetString() : null);
+            var aadHex = root.TryGetProperty("aadHex", out var aadCamel) ? aadCamel.GetString() : 
+                        (root.TryGetProperty("aad_hex", out var aadSnake) ? aadSnake.GetString() : "");
+            var algorithm = root.TryGetProperty("algorithm", out var algProp) ? algProp.GetString() : "AES-256-GCM";
+            
+            if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(ciphertextHex))
             {
-                _logger.LogInformation("TryParseAESEnvelope: KeyId or CiphertextHex is empty");
+                _logger.LogInformation("TryParseAESEnvelope: KeyId or CiphertextHex is empty after parsing both formats");
                 return false;
             }
             
             // Additional check: ensure it has AES-specific fields that OTP doesn't have
-            if (string.IsNullOrWhiteSpace(parsed.IvHex) || string.IsNullOrWhiteSpace(parsed.TagHex))
+            if (string.IsNullOrWhiteSpace(ivHex) || string.IsNullOrWhiteSpace(tagHex))
             {
                 _logger.LogInformation("TryParseAESEnvelope: IvHex or TagHex is empty");
                 return false;
             }
             
-            // Check if it has the Algorithm field (AES-specific)
-            if (!string.IsNullOrWhiteSpace(parsed.Algorithm) && parsed.Algorithm.Contains("AES"))
+            // Create envelope with converted format
+            envelope = new AESEnvelope
             {
-                _logger.LogInformation("TryParseAESEnvelope: Success - Algorithm field contains AES");
-                envelope = parsed;
-                return true;
-            }
+                KeyId = keyId,
+                IvHex = ivHex,
+                CiphertextHex = ciphertextHex,
+                TagHex = tagHex,
+                AadHex = aadHex ?? "",
+                Algorithm = algorithm ?? "AES-256-GCM"
+            };
             
-            // Even without Algorithm field, if it has all AES-specific fields, it's likely AES
-            _logger.LogInformation("TryParseAESEnvelope: Success - All AES fields present");
-            envelope = parsed;
+            _logger.LogInformation($"TryParseAESEnvelope: Success with snake_case conversion - KeyId: {envelope.KeyId}, IvHex: {envelope.IvHex}, CiphertextHex: {envelope.CiphertextHex}, TagHex: {envelope.TagHex}");
             return true;
         }
         catch (Exception ex)
