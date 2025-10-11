@@ -92,13 +92,24 @@ class AuthService {
     if (token == null) return null;
 
     try {
-      final jwt = JWT.decode(token);
-      final userId = jwt.payload['nameid'] as String?;
-      final email = jwt.payload['email'] as String?;
-      final name = jwt.payload['unique_name'] as String?;
-      
-      if (userId != null && email != null && name != null) {
-        return User(id: userId, email: email, name: name, avatar: null);
+      final response = await http.get(
+        Uri.parse('$_baseUrl/auth/me'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final userData = json.decode(response.body);
+        return User(
+          id: userData['id'] as String,
+          email: userData['email'] as String,
+          name: userData['name'] as String,
+          avatar: userData['avatarUrl'] as String?,
+          externalEmail: userData['externalEmail'] as String?,
+          emailProvider: userData['emailProvider'] as String?,
+        );
       }
       return null;
     } catch (e) {
@@ -145,6 +156,31 @@ class AuthService {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  Future<void> deleteAccount() async {
+    try {
+      final currentToken = await _getToken();
+      if (currentToken == null) throw Exception('No authentication token found');
+
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/auth/delete-account'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $currentToken',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        // Clear all local data after successful deletion
+        await clearAllData();
+      } else {
+        final error = json.decode(response.body);
+        throw Exception(error['message'] ?? 'Account deletion failed with status ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Account deletion failed: $e');
     }
   }
 }

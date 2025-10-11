@@ -153,6 +153,13 @@ class _ComposeScreenState extends State<ComposeScreen> {
         }
       }
 
+      // Log PQC keys being used for encryption
+      if (_selectedEncryptionMethod.startsWith('PQC')) {
+        print('[compose] Sending PQC email with method: $_selectedEncryptionMethod');
+        print('[compose] Using recipient public key: ${_recipientPublicKeyController.text.trim().substring(0, 50)}...');
+        print('[compose] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
+      }
+
       final success = await _emailService.sendEmail(
         senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
         recipientEmail: _toController.text.trim(),

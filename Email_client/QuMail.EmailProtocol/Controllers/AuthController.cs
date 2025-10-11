@@ -215,6 +215,54 @@ public class AuthController : ControllerBase
         }
     }
 
+    [HttpDelete("delete-account")]
+    [Authorize]
+    public async Task<IActionResult> DeleteAccount()
+    {
+        try
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(new { message = "Invalid token" });
+
+            var user = await _context.Users.FindAsync(Guid.Parse(userId));
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            // Delete all user-related data
+            var userEmails = await _context.Emails
+                .Where(e => e.SenderEmail == user.Email || e.RecipientEmail == user.Email)
+                .ToListAsync();
+            
+            _context.Emails.RemoveRange(userEmails);
+            
+            // Remove refresh tokens and sessions
+            var refreshTokens = await _context.RefreshTokens
+                .Where(rt => rt.UserId == user.Id)
+                .ToListAsync();
+            _context.RefreshTokens.RemoveRange(refreshTokens);
+            
+            var userSessions = await _context.UserSessions
+                .Where(us => us.UserId == user.Id)
+                .ToListAsync();
+            _context.UserSessions.RemoveRange(userSessions);
+            
+            // Finally, delete the user
+            _context.Users.Remove(user);
+            
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation($"User account deleted: {user.Email} (ID: {user.Id})");
+            
+            return Ok(new { message = "Account deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during account deletion");
+            return StatusCode(500, new { message = "Internal server error" });
+        }
+    }
+
     [HttpGet("me")]
     [Authorize]
     public async Task<ActionResult<UserDto>> GetCurrentUser()
@@ -367,4 +415,79 @@ public class AuthController : ControllerBase
             return false;
         }
     }
+
+    [HttpGet("pqc-keys")]
+    [Authorize]
+    public async Task<IActionResult> GetPqcKeys()
+    {
+        try
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(new { message = "Invalid token" });
+
+            var user = await _context.Users.FindAsync(Guid.Parse(userId));
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            if (string.IsNullOrEmpty(user.PqcPublicKey) || string.IsNullOrEmpty(user.PqcPrivateKey))
+                return NotFound(new { message = "No PQC keys found for user" });
+
+            return Ok(new
+            {
+                success = true,
+                data = new
+                {
+                    publicKey = user.PqcPublicKey,
+                    privateKey = user.PqcPrivateKey,
+                    keyGeneratedAt = user.PqcKeyGeneratedAt
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving PQC keys");
+            return StatusCode(500, new { message = "Internal server error" });
+        }
+    }
+
+    [HttpPost("pqc-keys")]
+    [Authorize]
+    public async Task<IActionResult> SavePqcKeys([FromBody] SavePqcKeysRequest request)
+    {
+        try
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(new { message = "Invalid token" });
+
+            var user = await _context.Users.FindAsync(Guid.Parse(userId));
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            if (string.IsNullOrEmpty(request.PublicKey) || string.IsNullOrEmpty(request.PrivateKey))
+                return BadRequest(new { message = "Public key and private key are required" });
+
+            user.PqcPublicKey = request.PublicKey;
+            user.PqcPrivateKey = request.PrivateKey;
+            user.PqcKeyGeneratedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation($"PQC keys saved for user: {user.Email}");
+
+            return Ok(new { success = true, message = "PQC keys saved successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error saving PQC keys");
+            return StatusCode(500, new { message = "Internal server error" });
+        }
+    }
+}
+
+public class SavePqcKeysRequest
+{
+    public string PublicKey { get; set; } = string.Empty;
+    public string PrivateKey { get; set; } = string.Empty;
 }

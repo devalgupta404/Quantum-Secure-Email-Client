@@ -121,6 +121,7 @@ class _SentScreenState extends State<SentScreen> {
                   body: jsonEncode({
                     'encryptedBody': subEnv['encryptedBody'],
                     'pqcCiphertext': subEnv['pqcCiphertext'],
+                    'encryptedKeyId': subEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );
@@ -130,6 +131,7 @@ class _SentScreenState extends State<SentScreen> {
                   body: jsonEncode({
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );
@@ -201,25 +203,23 @@ class _SentScreenState extends State<SentScreen> {
               if (priv != null && priv.isNotEmpty) {
                 try {
                   final subResp = await http.post(
-                    Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({
                       'encryptedBody': subEnv['encryptedBody'],
                       'pqcCiphertext': subEnv['pqcCiphertext'],
+                      'encryptedKeyId': subEnv['keyId'] ?? '',
                       'privateKey': priv,
-                      'algorithm': subEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
-                      'usedAES': subEnv['useAES'] ?? true,
                     }),
                   );
                   final bodyResp = await http.post(
-                    Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({
                       'encryptedBody': bodyEnv['encryptedBody'],
                       'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                      'encryptedKeyId': bodyEnv['keyId'] ?? '',
                       'privateKey': priv,
-                      'algorithm': bodyEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
-                      'usedAES': bodyEnv['useAES'] ?? true,
                     }),
                   );
 

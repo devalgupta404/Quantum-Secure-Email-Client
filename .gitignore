@@ -1,23 +1,50 @@
-/quantum-secure-email-client
-*.env
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
 
-temp_build/
-.vscode
-__pycache__/
-*.pyc
-.DS_Store
-.idea/
-*.log
+# Database files
+*.db
+*.sqlite
 *.sqlite3
-node_modules/
-dist/
-build/
-coverage/
-*.iml
 
-# .NET build artifacts
+# Log files
+logs/
+*.log
+
+# Key stores
+Key_Manager/km/key_store.json
+level1/encoder.exe
+level2new/aes_gcm_demo.exe
+
+# Temporary files
+temp_*
+*.tmp
+
+# .NET build outputs
 bin/
 obj/
-*.dll
-*.pdb
+*.user
+*.suo
 *.cache
+*.dll
+*.exe
+*.pdb
+
+# Flutter build outputs
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

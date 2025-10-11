@@ -53,10 +53,10 @@ public class User
     public string? OAuth2Token { get; set; }
 
     // PQC Key Storage
-    [StringLength(2048)]
+    [Column(TypeName = "text")]
     public string? PqcPublicKey { get; set; }
 
-    [StringLength(2048)]
+    [Column(TypeName = "text")]
     public string? PqcPrivateKey { get; set; }
 
     public DateTime? PqcKeyGeneratedAt { get; set; }

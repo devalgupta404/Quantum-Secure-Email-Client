@@ -13,11 +13,18 @@ class EmailService {
   static String? get pqcPrivateKey => _pqcPrivateKey;
   static String? get pqcPublicKey => _pqcPublicKey;
   
+  // Get authentication token
+  static Future<String?> _getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
+  }
+  
   // Key persistence methods
   static Future<void> _savePqcKeys(String publicKey, String privateKey) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('pqc_public_key', publicKey);
     await prefs.setString('pqc_private_key', privateKey);
+    print('[EmailService] Saved PQC keys to storage');
   }
   
   static Future<bool> _loadPqcKeys() async {
@@ -28,13 +35,16 @@ class EmailService {
     if (publicKey != null && privateKey != null) {
       _pqcPublicKey = publicKey;
       _pqcPrivateKey = privateKey;
+      print('[EmailService] Loaded PQC keys from storage - Public: ${publicKey.substring(0, 50)}..., Private: ${privateKey.substring(0, 50)}...');
       return true;
     }
+    print('[EmailService] No PQC keys found in storage');
     return false;
   }
 
   Future<bool> generatePqcKeyPair() async {
     try {
+      print('[EmailService] Generating new PQC key pair...');
       final response = await http.post(
         Uri.parse('http://localhost:5001/api/pqc/generate-keypair'),
         headers: {'Content-Type': 'application/json'},
@@ -51,26 +61,135 @@ class EmailService {
         
         // Save keys persistently
         await _savePqcKeys(publicKey, privateKey);
+        print('[EmailService] Generated new PQC key pair - Public: ${publicKey.substring(0, 50)}..., Private: ${privateKey.substring(0, 50)}...');
         return true;
       }
+      print('[EmailService] Failed to generate PQC key pair - Status: ${response.statusCode}, Body: ${response.body}');
       return false;
     } catch (e) {
+      print('[EmailService] Exception generating PQC key pair: $e');
       return false;
     }
   }
   
-  // Initialize PQC keys from storage or generate new ones
+  // Initialize PQC keys from backend user account or generate new ones
   static Future<bool> initializePqcKeys() async {
-    // Try to load existing keys first
-    final keysLoaded = await _loadPqcKeys();
-    if (keysLoaded) {
-      return true;
+    try {
+      print('[EmailService] Initializing PQC keys...');
+      
+      // Try to load keys from backend first (user-specific keys)
+      final keysLoaded = await _loadPqcKeysFromBackend();
+      if (keysLoaded) {
+        print('[EmailService] Loaded existing PQC keys from backend');
+        return true;
+      }
+      
+      // If no keys found in backend, generate new ones and save to backend
+      print('[EmailService] No existing keys found, generating new PQC key pair');
+      final service = EmailService();
+      final success = await service.generatePqcKeyPair();
+      
+      if (success) {
+        // Save the new keys to backend
+        print('[EmailService] Saving new PQC keys to backend...');
+        await _savePqcKeysToBackend();
+      }
+      
+      return success;
+    } catch (e) {
+      print('[EmailService] Error initializing PQC keys: $e');
+      return false;
     }
-    
-    // If no keys found, generate new ones
-    final service = EmailService();
-    return await service.generatePqcKeyPair();
   }
+
+  // Load PQC keys from backend user account
+  static Future<bool> _loadPqcKeysFromBackend() async {
+    try {
+      final token = await _getToken();
+      if (token == null) {
+        print('[EmailService] No auth token found for loading PQC keys');
+        return false;
+      }
+      
+      print('[EmailService] Loading PQC keys from backend...');
+      final response = await http.get(
+        Uri.parse('$_baseUrl/auth/pqc-keys'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      
+      print('[EmailService] Backend response status: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        print('[EmailService] Backend response data: $data');
+        if (data['success'] == true && data['data'] != null) {
+          final publicKey = data['data']['publicKey'] as String?;
+          final privateKey = data['data']['privateKey'] as String?;
+          
+          if (publicKey != null && privateKey != null) {
+            _pqcPublicKey = publicKey;
+            _pqcPrivateKey = privateKey;
+            // Also save to local storage for offline access
+            await _savePqcKeys(publicKey, privateKey);
+            print('[EmailService] Successfully loaded PQC keys from backend');
+            return true;
+          } else {
+            print('[EmailService] PQC keys are null in backend response');
+          }
+        } else {
+          print('[EmailService] Backend returned success=false or no data');
+        }
+      } else {
+        print('[EmailService] Backend returned error: ${response.body}');
+      }
+      return false;
+    } catch (e) {
+      print('[EmailService] Error loading PQC keys from backend: $e');
+      return false;
+    }
+  }
+
+  // Save PQC keys to backend user account
+  static Future<bool> _savePqcKeysToBackend() async {
+    try {
+      if (_pqcPublicKey == null || _pqcPrivateKey == null) {
+        return false;
+      }
+      
+      final token = await _getToken();
+      if (token == null) return false;
+      
+      final response = await http.post(
+        Uri.parse('$_baseUrl/auth/pqc-keys'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'publicKey': _pqcPublicKey,
+          'privateKey': _pqcPrivateKey,
+        }),
+      );
+      
+      return response.statusCode == 200;
+    } catch (e) {
+      print('[EmailService] Error saving PQC keys to backend: $e');
+      return false;
+    }
+  }
+
+  // Clear stored PQC keys (for testing/debugging)
+  static Future<void> clearPqcKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('pqc_public_key');
+    await prefs.remove('pqc_private_key');
+    _pqcPublicKey = null;
+    _pqcPrivateKey = null;
+    print('[EmailService] Cleared all PQC keys from storage and memory');
+  }
+
 
   // Register my PQC public key with backend so others can fetch it by email
   static Future<bool> registerMyPqcPublicKey(String email, String publicKey) async {
@@ -158,6 +277,8 @@ class EmailService {
         if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
           throw Exception('Recipient public key is required for PQC');
         }
+        print('[sendEmail][PQC_2_LAYER] Using recipient public key: ${actualRecipientPublicKey.substring(0, 50)}...');
+        print('[sendEmail][PQC_2_LAYER] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
         // Encrypt subject
         final pqcSub = await http.post(
           Uri.parse('http://localhost:5001/api/pqc/encrypt'),
@@ -185,6 +306,8 @@ class EmailService {
         if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
           throw Exception('Recipient public key is required for PQC');
         }
+        print('[sendEmail][PQC_3_LAYER] Using recipient public key: ${actualRecipientPublicKey.substring(0, 50)}...');
+        print('[sendEmail][PQC_3_LAYER] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
         // Enhanced PQC (Kyber512 + AES layer true for PQC_3_LAYER)
         final encReqSubject = {
           'plaintext': subject,

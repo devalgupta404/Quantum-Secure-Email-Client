@@ -66,6 +66,12 @@ class _InboxScreenState extends State<InboxScreen> {
           print('[inbox] Generating PQC key pair for decryption');
           await EmailService.initializePqcKeys();
         }
+        
+        // Debug: Check if we have PQC keys for decryption
+        if (email.encryptionMethod == 'PQC_2_LAYER' || email.encryptionMethod == 'PQC_3_LAYER') {
+          print('[inbox][PQC] Available private key: ${EmailService.pqcPrivateKey?.substring(0, 50)}...');
+          print('[inbox][PQC] Private key length: ${EmailService.pqcPrivateKey?.length}');
+        }
         if (email.encryptionMethod == 'AES') {
           try {
             // ignore: avoid_print
@@ -168,10 +174,18 @@ class _InboxScreenState extends State<InboxScreen> {
               // This is actual PQC data
               final priv = EmailService.pqcPrivateKey;
               print('[inbox][PQC_2_LAYER] Private key available: ${priv != null && priv.isNotEmpty}');
+              if (priv != null) {
+                print('[inbox][PQC_2_LAYER] Using private key: ${priv.substring(0, 50)}...');
+                print('[inbox][PQC_2_LAYER] Private key length: ${priv.length}');
+                print('[inbox][PQC_2_LAYER] Encrypted body length: ${subEnv['encryptedBody'].toString().length}');
+                print('[inbox][PQC_2_LAYER] PQC ciphertext length: ${subEnv['pqcCiphertext'].toString().length}');
+                print('[inbox][PQC_2_LAYER] Key ID: ${subEnv['keyId']}');
+              }
               if (priv != null && priv.isNotEmpty) {
                 final subjectDecryptBody = {
                   'encryptedBody': subEnv['encryptedBody'],
                   'pqcCiphertext': subEnv['pqcCiphertext'],
+                  'encryptedKeyId': subEnv['keyId'] ?? '',
                   'privateKey': priv,
                 };
                 print('[inbox][PQC_2_LAYER] Subject decrypt body: ${jsonEncode(subjectDecryptBody)}');
@@ -184,6 +198,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   final bodyDecryptBody = {
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
                   };
                   print('[inbox][PQC_2_LAYER] Body decrypt body: ${jsonEncode(bodyDecryptBody)}');
@@ -315,25 +330,23 @@ class _InboxScreenState extends State<InboxScreen> {
               if (priv != null && priv.isNotEmpty) {
               try {
                 final subResp = await http.post(
-                  Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                  Uri.parse('http://localhost:5001/api/pqc/decrypt'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode({
                     'encryptedBody': subEnv['encryptedBody'],
                     'pqcCiphertext': subEnv['pqcCiphertext'],
+                    'encryptedKeyId': subEnv['keyId'] ?? '',
                     'privateKey': priv,
-                    'algorithm': subEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
-                    'usedAES': subEnv['useAES'] ?? true,
                   }),
                 );
                 final bodyResp = await http.post(
-                  Uri.parse('http://localhost:5001/api/pqc/v2/decrypt'),
+                  Uri.parse('http://localhost:5001/api/pqc/decrypt'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode({
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
+                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
-                    'algorithm': bodyEnv['algorithm'] ?? 'Kyber-512+AES256+OTP',
-                    'usedAES': bodyEnv['useAES'] ?? true,
                   }),
                 );
 
@@ -1018,7 +1031,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   ],
                 ),
               ),
-              Expanded(
+              Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
                   child: Column(
@@ -1199,10 +1212,11 @@ class _InboxScreenState extends State<InboxScreen> {
                 ),
               ),
             ],
-          ),
+          )
         );
-      },
+        }
     );
+
   }
 }
 

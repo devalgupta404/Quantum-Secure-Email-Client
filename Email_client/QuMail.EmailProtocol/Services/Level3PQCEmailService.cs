@@ -230,6 +230,22 @@ public class Level3PQCEmailService
         sb.AppendLine("=== End QuMail PQC Email ===");
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Provides access to the KeyManager for legacy decryption support
+    /// </summary>
+    public IQuantumKeyManager GetKeyManager()
+    {
+        return _keyManager;
+    }
+
+    /// <summary>
+    /// Provides access to the OTP Engine for legacy decryption support
+    /// </summary>
+    public IOneTimePadEngine GetOTPEngine()
+    {
+        return _otpEngine;
+    }
 }
 
 /// <summary>
