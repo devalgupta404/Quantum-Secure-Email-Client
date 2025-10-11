@@ -101,6 +101,7 @@ public class PQCController : ControllerBase
                 {
                     encryptedBody = encrypted.EncryptedBody,
                     pqcCiphertext = encrypted.PQCCiphertext,
+                    encryptedKeyId = encrypted.EncryptedKeyId,
                     algorithm = encrypted.Algorithm,
                     keyId = encrypted.KeyId,
                     encryptedAt = encrypted.EncryptedAt
@@ -232,6 +233,7 @@ public class PQCController : ControllerBase
             {
                 EncryptedBody = encrypted.EncryptedBody,
                 PQCCiphertext = encrypted.PQCCiphertext,
+                EncryptedKeyId = encrypted.EncryptedKeyId,
                 Algorithm = encrypted.Algorithm,
                 KeyId = encrypted.KeyId
             };

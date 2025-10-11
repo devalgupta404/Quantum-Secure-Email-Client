@@ -185,7 +185,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 final subjectDecryptBody = {
                   'encryptedBody': subEnv['encryptedBody'],
                   'pqcCiphertext': subEnv['pqcCiphertext'],
-                  'encryptedKeyId': subEnv['keyId'] ?? '',
+                  'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
                   'privateKey': priv,
                 };
                 print('[inbox][PQC_2_LAYER] Subject decrypt body: ${jsonEncode(subjectDecryptBody)}');
@@ -198,7 +198,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   final bodyDecryptBody = {
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
+                    'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
                   };
                   print('[inbox][PQC_2_LAYER] Body decrypt body: ${jsonEncode(bodyDecryptBody)}');
@@ -335,7 +335,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   body: jsonEncode({
                     'encryptedBody': subEnv['encryptedBody'],
                     'pqcCiphertext': subEnv['pqcCiphertext'],
-                    'encryptedKeyId': subEnv['keyId'] ?? '',
+                    'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );
@@ -345,7 +345,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   body: jsonEncode({
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
+                    'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );

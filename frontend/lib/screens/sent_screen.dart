@@ -121,7 +121,7 @@ class _SentScreenState extends State<SentScreen> {
                   body: jsonEncode({
                     'encryptedBody': subEnv['encryptedBody'],
                     'pqcCiphertext': subEnv['pqcCiphertext'],
-                    'encryptedKeyId': subEnv['keyId'] ?? '',
+                    'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );
@@ -131,7 +131,7 @@ class _SentScreenState extends State<SentScreen> {
                   body: jsonEncode({
                     'encryptedBody': bodyEnv['encryptedBody'],
                     'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                    'encryptedKeyId': bodyEnv['keyId'] ?? '',
+                    'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
                     'privateKey': priv,
                   }),
                 );
@@ -208,7 +208,7 @@ class _SentScreenState extends State<SentScreen> {
                     body: jsonEncode({
                       'encryptedBody': subEnv['encryptedBody'],
                       'pqcCiphertext': subEnv['pqcCiphertext'],
-                      'encryptedKeyId': subEnv['keyId'] ?? '',
+                      'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
                       'privateKey': priv,
                     }),
                   );
@@ -218,7 +218,7 @@ class _SentScreenState extends State<SentScreen> {
                     body: jsonEncode({
                       'encryptedBody': bodyEnv['encryptedBody'],
                       'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                      'encryptedKeyId': bodyEnv['keyId'] ?? '',
+                      'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
                       'privateKey': priv,
                     }),
                   );

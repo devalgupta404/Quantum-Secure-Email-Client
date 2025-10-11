@@ -118,6 +118,7 @@ public class EnhancedPQCController : ControllerBase
                 {
                     encryptedBody = encrypted.EncryptedBody,
                     pqcCiphertext = encrypted.PQCCiphertext,
+                    encryptedKeyId = encrypted.EncryptedKeyId,
                     algorithm = encrypted.Algorithm,
                     securityLevel = encrypted.SecurityLevel,
                     useAES = encrypted.UseAES,
@@ -283,6 +284,7 @@ public class EnhancedPQCController : ControllerBase
             {
                 EncryptedBody = encrypted.EncryptedBody,
                 PQCCiphertext = encrypted.PQCCiphertext,
+                EncryptedKeyId = encrypted.EncryptedKeyId,
                 Algorithm = encrypted.Algorithm,
                 SecurityLevel = encrypted.SecurityLevel,
                 UseAES = encrypted.UseAES,
@@ -358,6 +360,7 @@ public class EnhancedPQCController : ControllerBase
             {
                 EncryptedBody = encrypted.EncryptedBody,
                 PQCCiphertext = encrypted.PQCCiphertext,
+                EncryptedKeyId = encrypted.EncryptedKeyId,
                 Algorithm = encrypted.Algorithm,
                 SecurityLevel = encrypted.SecurityLevel,
                 UseAES = encrypted.UseAES,
@@ -507,6 +510,7 @@ public class PQCEmailEnvelope
 {
     public string EncryptedBody { get; set; } = string.Empty;
     public string PQCCiphertext { get; set; } = string.Empty;
+    public string EncryptedKeyId { get; set; } = string.Empty;
     public string Algorithm { get; set; } = string.Empty;
     public string SecurityLevel { get; set; } = string.Empty;
     public bool UseAES { get; set; }
