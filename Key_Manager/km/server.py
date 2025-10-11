@@ -40,14 +40,28 @@ def get_key_by_id(key_id):
     key_hex = KEY_STORE.get(key_id)
     if not key_hex:
         return "Not found", 404
-    
+
     # FIXED: Return raw bytes instead of JSON
     key_bytes = bytes.fromhex(key_hex)
     response = make_response(key_bytes)
     response.headers["Content-Type"] = "application/octet-stream"
     return response
 
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Docker/Kubernetes"""
+    key_count = len(KEY_STORE)
+    store_exists = os.path.exists(STORE_FILE)
 
+    return json.dumps({
+        "status": "healthy",
+        "service": "key-manager",
+        "version": "1.0",
+        "metrics": {
+            "stored_keys": key_count,
+            "store_file_exists": store_exists
+        }
+    }), 200, {"Content-Type": "application/json"}
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8080)

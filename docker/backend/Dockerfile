@@ -28,8 +28,10 @@ WORKDIR /app
 # Copy the published application
 COPY --from=publish /app/publish .
 
-# Copy the level1.dll file
-COPY Email_client/QuMail.EmailProtocol/level1.dll .
+# REMOVED: level1.dll copy - this DLL is not used (dead code)
+# The system uses pure C# OTP (Level1OneTimePadEngine.cs) and BouncyCastle for PQC
+# Both are cross-platform and don't require native DLLs
+# COPY Email_client/QuMail.EmailProtocol/level1.dll .
 
 # Set environment variables
 ENV ASPNETCORE_URLS=http://+:5001

@@ -430,16 +430,18 @@ public class AuthController : ControllerBase
             if (user == null)
                 return NotFound(new { message = "User not found" });
 
-            if (string.IsNullOrEmpty(user.PqcPublicKey) || string.IsNullOrEmpty(user.PqcPrivateKey))
+            if (string.IsNullOrEmpty(user.PqcPublicKey))
                 return NotFound(new { message = "No PQC keys found for user" });
 
+            // SECURITY: Never return private keys from backend
+            // Private keys should only exist on the client device
             return Ok(new
             {
                 success = true,
                 data = new
                 {
                     publicKey = user.PqcPublicKey,
-                    privateKey = user.PqcPrivateKey,
+                    // REMOVED: privateKey - this should never be stored/returned by backend
                     keyGeneratedAt = user.PqcKeyGeneratedAt
                 }
             });
@@ -465,22 +467,23 @@ public class AuthController : ControllerBase
             if (user == null)
                 return NotFound(new { message = "User not found" });
 
-            if (string.IsNullOrEmpty(request.PublicKey) || string.IsNullOrEmpty(request.PrivateKey))
-                return BadRequest(new { message = "Public key and private key are required" });
+            if (string.IsNullOrEmpty(request.PublicKey))
+                return BadRequest(new { message = "Public key is required" });
 
+            // SECURITY: Only store public key - private keys should never reach the backend
             user.PqcPublicKey = request.PublicKey;
-            user.PqcPrivateKey = request.PrivateKey;
+            // REMOVED: user.PqcPrivateKey assignment - private keys stay on client only
             user.PqcKeyGeneratedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation($"PQC keys saved for user: {user.Email}");
+            _logger.LogInformation($"PQC public key saved for user: {user.Email}");
 
-            return Ok(new { success = true, message = "PQC keys saved successfully" });
+            return Ok(new { success = true, message = "PQC public key saved successfully" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error saving PQC keys");
+            _logger.LogError(ex, "Error saving PQC public key");
             return StatusCode(500, new { message = "Internal server error" });
         }
     }
@@ -489,5 +492,5 @@ public class AuthController : ControllerBase
 public class SavePqcKeysRequest
 {
     public string PublicKey { get; set; } = string.Empty;
-    public string PrivateKey { get; set; } = string.Empty;
+    // REMOVED: PrivateKey property - private keys should never be sent to backend
 }

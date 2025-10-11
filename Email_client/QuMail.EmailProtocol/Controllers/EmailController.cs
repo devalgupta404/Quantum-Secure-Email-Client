@@ -27,9 +27,11 @@ public class EmailController : ControllerBase
     private readonly Level3HybridEncryption _hybridEncryption;
     private static readonly HttpClient _http = new HttpClient
     {
-        Timeout = TimeSpan.FromSeconds(10)
+        Timeout = TimeSpan.FromSeconds(30) // Increased from 10s for slow container startup
     };
-    private const string OtpBaseUrl = "http://aes-server:8081"; // OTP API Docker network address
+    private const string OtpBaseUrl = "http://otp-server:8081"; // OTP API Docker network address
+    private const string AesBaseUrl = "http://aes-server:8082"; // AES API Docker network address
+    private const int MaxRetries = 3;
 
     public EmailController(
         AuthDbContext context, 
@@ -404,26 +406,58 @@ public class EmailController : ControllerBase
         }
     }
 
-    private static async Task<string> EncryptBodyAsync(string plaintext)
+    private async Task<string> EncryptBodyAsync(string plaintext)
     {
-        // Call OTP encrypt API and return JSON envelope string to store in DB Body
-        try
+        // Call OTP encrypt API with retry logic
+        return await RetryAsync(async () =>
         {
+            _logger.LogInformation("Calling OTP encrypt API at {OtpUrl}/api/otp/encrypt for plaintext length {Length}", OtpBaseUrl, plaintext?.Length ?? 0);
+
             var req = new OtpEncryptRequest(plaintext);
             using var response = await _http.PostAsJsonAsync($"{OtpBaseUrl}/api/otp/encrypt", req, _jsonOptions);
+
+            _logger.LogInformation("OTP encrypt API response status: {StatusCode}", response.StatusCode);
+
             response.EnsureSuccessStatusCode();
             var res = await response.Content.ReadFromJsonAsync<OtpEncryptResponse>(_jsonOptions);
+
             if (res == null || string.IsNullOrWhiteSpace(res.key_id) || string.IsNullOrWhiteSpace(res.ciphertext_b64url))
             {
+                _logger.LogError("OTP encrypt returned invalid response - null or missing fields");
                 throw new InvalidOperationException("Invalid encrypt response");
             }
+
             var envelope = new BodyEnvelope(res.key_id, res.ciphertext_b64url);
+            _logger.LogInformation("OTP encryption successful, key_id: {KeyId}", res.key_id);
             return JsonSerializer.Serialize(envelope, _jsonOptions);
-        }
-        catch (Exception ex)
+        }, "OTP encryption");
+    }
+
+    /// <summary>
+    /// Retry helper with exponential backoff for HTTP calls to encryption services
+    /// </summary>
+    private async Task<T> RetryAsync<T>(Func<Task<T>> operation, string operationName)
+    {
+        for (int attempt = 1; attempt <= MaxRetries; attempt++)
         {
-            throw new InvalidOperationException($"Encryption service failed: {ex.Message}");
+            try
+            {
+                return await operation();
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries)
+            {
+                var delaySeconds = Math.Pow(2, attempt); // Exponential backoff: 2s, 4s, 8s
+                _logger.LogWarning(ex, "{Operation} failed (attempt {Attempt}/{MaxRetries}), retrying in {Delay}s...",
+                    operationName, attempt, MaxRetries, delaySeconds);
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
+            }
+            catch (Exception ex) when (attempt == MaxRetries)
+            {
+                _logger.LogError(ex, "{Operation} failed after {MaxRetries} attempts", operationName, MaxRetries);
+                throw new InvalidOperationException($"{operationName} failed: {ex.Message}", ex);
+            }
         }
+        throw new InvalidOperationException($"{operationName} failed after {MaxRetries} retries");
     }
 
     private bool IsAlreadyEncrypted(string data, string method)
@@ -629,8 +663,8 @@ public class EmailController : ControllerBase
                 aad_hex = envelope.AadHex
             };
             
-            _logger.LogInformation("Sending AES decrypt request to: http://aes-server:8081/api/gcm/decrypt");
-            using var response = await _http.PostAsJsonAsync("http://aes-server:8081/api/gcm/decrypt", req);
+            _logger.LogInformation("Sending AES decrypt request to: {AesUrl}/api/gcm/decrypt", AesBaseUrl);
+            using var response = await _http.PostAsJsonAsync($"{AesBaseUrl}/api/gcm/decrypt", req);
             
             _logger.LogInformation("AES decrypt API response status: {StatusCode}", response.StatusCode);
             
@@ -1011,34 +1045,34 @@ public class EmailController : ControllerBase
 
     private async Task<string> EncryptWithAESGCMAsync(string plaintext)
     {
-        try
+        return await RetryAsync(async () =>
         {
             _logger.LogInformation("Starting AES-GCM encryption for plaintext: {Plaintext}", plaintext);
-            
+
             var requestBody = new { plaintext = plaintext };
-            _logger.LogInformation("Sending request to AES server: http://aes-server:8081/api/gcm/encrypt");
-            
-            var response = await _http.PostAsJsonAsync("http://aes-server:8081/api/gcm/encrypt", requestBody);
-            
+            _logger.LogInformation("Sending request to AES server: {AesUrl}/api/gcm/encrypt", AesBaseUrl);
+
+            var response = await _http.PostAsJsonAsync($"{AesBaseUrl}/api/gcm/encrypt", requestBody);
+
             _logger.LogInformation("AES server response status: {StatusCode}", response.StatusCode);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
                 _logger.LogError($"AES-GCM encryption failed: {response.StatusCode} - {errorContent}");
-                throw new Exception($"AES-GCM encryption failed: {response.StatusCode} - {errorContent}");
+                throw new HttpRequestException($"AES-GCM encryption failed: {response.StatusCode} - {errorContent}");
             }
-            
+
             var result = await response.Content.ReadFromJsonAsync<AESEncryptionResult>();
-            if (result == null) 
+            if (result == null)
             {
                 _logger.LogError("Failed to parse AES encryption response - result is null");
                 throw new Exception("Failed to parse AES encryption response - result is null");
             }
-            
-            _logger.LogInformation("AES encryption successful - KeyId: {KeyId}, IvHex: {IvHex}, CiphertextHex: {CiphertextHex}, TagHex: {TagHex}", 
+
+            _logger.LogInformation("AES encryption successful - KeyId: {KeyId}, IvHex: {IvHex}, CiphertextHex: {CiphertextHex}, TagHex: {TagHex}",
                 result.KeyId, result.IvHex, result.CiphertextHex, result.TagHex);
-            
+
             // Store AES envelope in proper format for decryption
             var envelope = new AESEnvelope
             {
@@ -1049,17 +1083,12 @@ public class EmailController : ControllerBase
                 AadHex = result.AadHex,
                 Algorithm = "AES-256-GCM"
             };
-            
+
             var serialized = JsonSerializer.Serialize(envelope, _jsonOptions);
             _logger.LogInformation("AES envelope serialized: {Envelope}", serialized);
-            
+
             return serialized;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "AES-GCM encryption failed for plaintext: {Plaintext}", plaintext);
-            throw;
-        }
+        }, "AES-GCM encryption");
     }
 
     private async Task<string> EncryptSingleWithPQC2LayerAsync(string plaintext, string recipientPublicKey)

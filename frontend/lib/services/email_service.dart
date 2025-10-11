@@ -102,16 +102,17 @@ class EmailService {
     }
   }
 
-  // Load PQC keys from backend user account
+  // Load PQC PUBLIC KEY from backend user account
+  // NOTE: Private keys are NEVER stored on backend, only on device
   static Future<bool> _loadPqcKeysFromBackend() async {
     try {
       final token = await _getToken();
       if (token == null) {
-        print('[EmailService] No auth token found for loading PQC keys');
+        print('[EmailService] No auth token found for loading PQC public key');
         return false;
       }
-      
-      print('[EmailService] Loading PQC keys from backend...');
+
+      print('[EmailService] Loading PQC public key from backend...');
       final response = await http.get(
         Uri.parse('$_baseUrl/auth/pqc-keys'),
         headers: {
@@ -119,24 +120,26 @@ class EmailService {
           'Authorization': 'Bearer $token',
         },
       );
-      
+
       print('[EmailService] Backend response status: ${response.statusCode}');
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         print('[EmailService] Backend response data: $data');
         if (data['success'] == true && data['data'] != null) {
           final publicKey = data['data']['publicKey'] as String?;
-          final privateKey = data['data']['privateKey'] as String?;
-          
-          if (publicKey != null && privateKey != null) {
+
+          if (publicKey != null) {
             _pqcPublicKey = publicKey;
-            _pqcPrivateKey = privateKey;
-            // Also save to local storage for offline access
-            await _savePqcKeys(publicKey, privateKey);
-            print('[EmailService] Successfully loaded PQC keys from backend');
+            // Try to load private key from local storage only
+            final localKeys = await _loadPqcKeys();
+            if (!localKeys) {
+              print('[EmailService] Public key loaded from backend, but no private key in local storage - need to regenerate keypair');
+              return false;
+            }
+            print('[EmailService] Successfully loaded public key from backend and private key from local storage');
             return true;
           } else {
-            print('[EmailService] PQC keys are null in backend response');
+            print('[EmailService] Public key is null in backend response');
           }
         } else {
           print('[EmailService] Backend returned success=false or no data');
@@ -146,21 +149,22 @@ class EmailService {
       }
       return false;
     } catch (e) {
-      print('[EmailService] Error loading PQC keys from backend: $e');
+      print('[EmailService] Error loading PQC public key from backend: $e');
       return false;
     }
   }
 
-  // Save PQC keys to backend user account
+  // Save PQC PUBLIC KEY ONLY to backend user account
+  // SECURITY: Private keys must NEVER be sent to backend - they stay on device only
   static Future<bool> _savePqcKeysToBackend() async {
     try {
-      if (_pqcPublicKey == null || _pqcPrivateKey == null) {
+      if (_pqcPublicKey == null) {
         return false;
       }
-      
+
       final token = await _getToken();
       if (token == null) return false;
-      
+
       final response = await http.post(
         Uri.parse('$_baseUrl/auth/pqc-keys'),
         headers: {
@@ -169,13 +173,13 @@ class EmailService {
         },
         body: jsonEncode({
           'publicKey': _pqcPublicKey,
-          'privateKey': _pqcPrivateKey,
+          // REMOVED: 'privateKey' - private keys never leave the device!
         }),
       );
-      
+
       return response.statusCode == 200;
     } catch (e) {
-      print('[EmailService] Error saving PQC keys to backend: $e');
+      print('[EmailService] Error saving PQC public key to backend: $e');
       return false;
     }
   }

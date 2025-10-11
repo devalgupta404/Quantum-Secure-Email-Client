@@ -1,4 +1,4 @@
-# server.py
+# aes_server.py - AES-GCM encryption service
 from flask import Flask, request, jsonify
 import requests, subprocess, binascii, os
 
@@ -10,7 +10,7 @@ app = Flask(__name__)
 def b2h(b): return binascii.hexlify(b).decode()
 
 def get_iv_hex():
-    # IV doesn’t need an id; 12B recommended
+    # IV doesn't need an id; 12B recommended
     r = requests.get(f"{KM}/otp/keys", params={"size": 12}, timeout=5)
     r.raise_for_status()
     # accept raw or json
@@ -48,9 +48,7 @@ def get_new_key_and_id(bytes_needed=16):
         key_hex = b2h(r.content)
 
     if not key_id:
-        # If KM didn’t send a header, try common fallback routes to mint an id:
-        #   GET /otp/last_id or include a simple deterministic id (NOT ideal).
-        # Best: update KM to send X-Key-Id. For now, synthesize one (temporary).
+        # If KM didn't send a header, synthesize one (temporary)
         key_id = "K-unknown-" + os.urandom(4).hex()
 
     return key_hex, key_id
@@ -143,77 +141,11 @@ def decrypt_gcm():
     # plaintext bytes out
     return proc.stdout, 200, {"Content-Type": "application/octet-stream"}
 
-@app.post("/api/otp/encrypt")
-def encrypt_otp():
-    """OTP encryption endpoint for compatibility with backend"""
-    try:
-        body = request.get_json()
-        if not body or "text" not in body:
-            return jsonify({"error": "Missing text field"}), 400
-        
-        plaintext = body["text"]
-        
-        # Get a new key for OTP encryption
-        key_hex, key_id = get_new_key_and_id(len(plaintext.encode('utf-8')))
-        key_bytes = binascii.unhexlify(key_hex)
-        plaintext_bytes = plaintext.encode('utf-8')
-        
-        # XOR encryption (OTP)
-        ciphertext_bytes = bytearray()
-        for i, byte in enumerate(plaintext_bytes):
-            ciphertext_bytes.append(byte ^ key_bytes[i % len(key_bytes)])
-        
-        # Convert to base64url
-        import base64
-        ciphertext_b64url = base64.urlsafe_b64encode(ciphertext_bytes).decode('ascii').rstrip('=')
-        
-        return jsonify({
-            "key_id": key_id,
-            "ciphertext_b64url": ciphertext_b64url
-        })
-    except Exception as e:
-        return jsonify({"error": "encryption_failed", "detail": str(e)}), 500
-
-@app.post("/api/otp/decrypt")
-def decrypt_otp():
-    """OTP decryption endpoint"""
-    try:
-        body = request.get_json()
-        if not body or "key_id" not in body or "ciphertext_b64url" not in body:
-            return jsonify({"error": "Missing required fields"}), 400
-
-        key_id = body["key_id"]
-        ciphertext_b64url = body["ciphertext_b64url"]
-
-        # Convert from base64url
-        import base64
-        # Add padding if needed
-        missing_padding = len(ciphertext_b64url) % 4
-        if missing_padding:
-            ciphertext_b64url += '=' * (4 - missing_padding)
-        ciphertext_bytes = base64.urlsafe_b64decode(ciphertext_b64url)
-
-        # Get the key
-        key_hex = get_key_hex_by_id(key_id)
-        key_bytes = binascii.unhexlify(key_hex)
-
-        # XOR decryption (OTP)
-        plaintext_bytes = bytearray()
-        for i, byte in enumerate(ciphertext_bytes):
-            plaintext_bytes.append(byte ^ key_bytes[i % len(key_bytes)])
-
-        return jsonify({
-            "text": plaintext_bytes.decode('utf-8')
-        }), 200
-    except Exception as e:
-        return jsonify({"error": "decryption_failed", "detail": str(e)}), 500
-
 @app.get("/health")
 def health_check():
     """Health check endpoint for Docker/Kubernetes"""
     try:
         # Test that AES binary is accessible
-        import subprocess
         proc = subprocess.run([AES_BIN, "--help"], capture_output=True, timeout=2)
         aes_status = "healthy" if proc.returncode == 0 else "degraded"
     except:
@@ -239,5 +171,4 @@ def health_check():
     }), 200 if overall_status == "healthy" else 503
 
 if __name__ == "__main__":
-    import os
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8082")))

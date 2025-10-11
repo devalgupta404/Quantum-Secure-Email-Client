@@ -35,14 +35,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # TEMPORARILY DISABLED: Health check endpoint code not in container yet
     # healthcheck:
-      # test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/otp/keys?size=16')"]
-      # interval: 10s
-      # timeout: 5s
-      # retries: 3
+    #   test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
     restart: unless-stopped
 
-  # AES GCM Service
+  # OTP Encryption Service
+  otp-server:
+    build:
+      context: ..
+      dockerfile: ./docker/otp-server/Dockerfile
+    container_name: quantum_otp_server
+    environment:
+      - FLASK_ENV=production
+      - KM_URL=http://key-manager:8080
+      - PORT=8081
+    networks:
+      - quantum_network
+    depends_on:
+      key-manager:
+        condition: service_started
+    restart: unless-stopped
+
+  # AES GCM Encryption Service
   aes-server:
     build:
       context: ..
@@ -51,6 +69,7 @@ services:
     environment:
       - FLASK_ENV=production
       - KM_URL=http://key-manager:8080
+      - PORT=8082
     networks:
       - quantum_network
     depends_on:
@@ -108,14 +127,18 @@ services:
       - APP_SECRET_KEY=${APP_SECRET_KEY:-your-base64-encoded-secret-key-here}
     ports:
       - "5001:5001"
-    volumes:
-      - ../Email_client/QuMail.EmailProtocol/level1.dll:/app/level1.dll:ro
+    # REMOVED: level1.dll volume mount - this DLL is not used (dead code)
+    # The system uses pure C# OTP and BouncyCastle for PQC (both cross-platform)
+    # volumes:
+    #   - ../Email_client/QuMail.EmailProtocol/level1.dll:/app/level1.dll:ro
     networks:
       - quantum_network
     depends_on:
       postgres:
         condition: service_healthy
       key-manager:
+        condition: service_started
+      otp-server:
         condition: service_started
       aes-server:
         condition: service_started
