@@ -1,0 +1,154 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    build:
+      context: ..
+      dockerfile: ./docker/database/Dockerfile
+    container_name: quantum_postgres
+    environment:
+      POSTGRES_DB: quantum_auth
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-quantum_secure_password_2024}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - quantum_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quantum_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Key Manager Service
+  key-manager:
+    build:
+      context: ..
+      dockerfile: ./docker/key-manager/Dockerfile
+    container_name: quantum_key_manager
+    environment:
+      - FLASK_ENV=production
+    volumes:
+      - key_store:/app/km
+    networks:
+      - quantum_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # healthcheck:
+      # test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/otp/keys?size=16')"]
+      # interval: 10s
+      # timeout: 5s
+      # retries: 3
+    restart: unless-stopped
+
+  # AES GCM Service
+  aes-server:
+    build:
+      context: ..
+      dockerfile: ./docker/aes-server/Dockerfile
+    container_name: quantum_aes_server
+    environment:
+      - FLASK_ENV=production
+      - KM_URL=http://key-manager:8080
+    networks:
+      - quantum_network
+    depends_on:
+      key-manager:
+        condition: service_started
+    restart: unless-stopped
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ..
+      dockerfile: ./docker/auth/Dockerfile
+    container_name: quantum_auth_service
+    environment:
+      - FLASK_ENV=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=quantum_auth
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-quantum_secure_password_2024}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-jwt-key-here-must-be-at-least-32-characters-long-for-security}
+      - JWT_ISSUER=QuMail
+      - JWT_AUDIENCE=QuMail-Users
+      - JWT_EXPIRES_MINUTES=60
+    networks:
+      - quantum_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # .NET Backend API
+  backend:
+    build:
+      context: ..
+      dockerfile: ./docker/backend/Dockerfile
+    container_name: quantum_backend
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=quantum_auth
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-quantum_secure_password_2024}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-jwt-key-here-must-be-at-least-32-characters-long-for-security}
+      - JWT_ISSUER=QuMail
+      - JWT_AUDIENCE=QuMail-Users
+      - JWT_EXPIRES_MINUTES=60
+      - APP_SECRET_KEY=${APP_SECRET_KEY:-your-base64-encoded-secret-key-here}
+    ports:
+      - "5001:5001"
+    volumes:
+      - ../Email_client/QuMail.EmailProtocol/level1.dll:/app/level1.dll:ro
+    networks:
+      - quantum_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      key-manager:
+        condition: service_started
+      aes-server:
+        condition: service_started
+      auth-service:
+        condition: service_healthy
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      # interval: 10s
+      # timeout: 5s
+      # retries: 3
+    restart: unless-stopped
+
+  # Flutter Frontend
+  frontend:
+    build:
+      context: ..
+      dockerfile: ./docker/frontend/Dockerfile
+    container_name: quantum_frontend
+    ports:
+      - "80:80"
+    networks:
+      - quantum_network
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  key_store:
+    driver: local
+
+networks:
+  quantum_network:
+    driver: bridge

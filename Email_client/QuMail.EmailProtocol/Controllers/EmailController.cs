@@ -29,7 +29,7 @@ public class EmailController : ControllerBase
     {
         Timeout = TimeSpan.FromSeconds(10)
     };
-    private const string OtpBaseUrl = "http://127.0.0.1:8081"; // OTP API default port
+    private const string OtpBaseUrl = "http://aes-server:8081"; // OTP API Docker network address
 
     public EmailController(
         AuthDbContext context, 
@@ -247,8 +247,9 @@ public class EmailController : ControllerBase
             var emails = new List<object>(emailEntities.Count);
             foreach (var e in emailEntities)
             {
-                var decryptedBody = await DecryptByMethodAsync(e.Body, e.EncryptionMethod);
-                var decryptedSubject = await DecryptByMethodAsync(e.Subject, e.EncryptionMethod);
+                // Use automatic decryption detection instead of relying on stored encryption method
+                var decryptedBody = await TryDecryptBodyAsync(e.Body);
+                var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
                 var attachments = await TryDecryptAttachmentsAsync(e.Attachments);
                 emails.Add(new
                 {
@@ -628,8 +629,8 @@ public class EmailController : ControllerBase
                 aad_hex = envelope.AadHex
             };
             
-            _logger.LogInformation("Sending AES decrypt request to: http://127.0.0.1:8082/api/gcm/decrypt");
-            using var response = await _http.PostAsJsonAsync("http://127.0.0.1:8082/api/gcm/decrypt", req);
+            _logger.LogInformation("Sending AES decrypt request to: http://aes-server:8081/api/gcm/decrypt");
+            using var response = await _http.PostAsJsonAsync("http://aes-server:8081/api/gcm/decrypt", req);
             
             _logger.LogInformation("AES decrypt API response status: {StatusCode}", response.StatusCode);
             
@@ -976,9 +977,9 @@ public class EmailController : ControllerBase
             _logger.LogInformation("Starting AES-GCM encryption for plaintext: {Plaintext}", plaintext);
             
             var requestBody = new { plaintext = plaintext };
-            _logger.LogInformation("Sending request to AES server: http://127.0.0.1:8082/api/gcm/encrypt");
+            _logger.LogInformation("Sending request to AES server: http://aes-server:8081/api/gcm/encrypt");
             
-            var response = await _http.PostAsJsonAsync("http://127.0.0.1:8082/api/gcm/encrypt", requestBody);
+            var response = await _http.PostAsJsonAsync("http://aes-server:8081/api/gcm/encrypt", requestBody);
             
             _logger.LogInformation("AES server response status: {StatusCode}", response.StatusCode);
             

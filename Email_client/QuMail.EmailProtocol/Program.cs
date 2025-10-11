@@ -134,6 +134,21 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+// Run database migrations
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<AuthDbContext>();
+    try
+    {
+        context.Database.Migrate();
+        Console.WriteLine("Database migrations applied successfully.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error applying database migrations: {ex.Message}");
+    }
+}
+
 // Configure pipeline
 if (app.Environment.IsDevelopment())
 {

@@ -342,25 +342,9 @@ class EmailService {
           throw Exception('Enhanced PQC encryption failed');
         }
       } else if (encryptionMethod == 'OTP') {
-        // OTP encryption via otp_api_test.py
-        final subjectResponse = await http.post(
-          Uri.parse('http://127.0.0.1:8081/encrypt'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'plaintext': subject}),
-        );
-        
-        final bodyResponse = await http.post(
-          Uri.parse('http://127.0.0.1:8081/encrypt'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'plaintext': body}),
-        );
-        
-        if (subjectResponse.statusCode == 200 && bodyResponse.statusCode == 200) {
-          finalSubject = jsonEncode(jsonDecode(subjectResponse.body));
-          finalBody = jsonEncode(jsonDecode(bodyResponse.body));
-        } else {
-          throw Exception('OTP encryption failed');
-        }
+        // Let the backend handle OTP encryption
+        finalSubject = subject;
+        finalBody = body;
       }
 
       final requestBody = {
@@ -386,9 +370,12 @@ class EmailService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['success'] == true;
+      } else {
+        print('[sendEmail] Backend error: ${response.statusCode} - ${response.body}');
+        return false;
       }
-      return false;
     } catch (e) {
+      print('[sendEmail] Exception: $e');
       return false;
     }
   }

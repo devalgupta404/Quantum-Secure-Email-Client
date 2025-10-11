@@ -143,6 +143,71 @@ def decrypt_gcm():
     # plaintext bytes out
     return proc.stdout, 200, {"Content-Type": "application/octet-stream"}
 
+@app.post("/api/otp/encrypt")
+def encrypt_otp():
+    """OTP encryption endpoint for compatibility with backend"""
+    try:
+        body = request.get_json()
+        if not body or "text" not in body:
+            return jsonify({"error": "Missing text field"}), 400
+        
+        plaintext = body["text"]
+        
+        # Get a new key for OTP encryption
+        key_hex, key_id = get_new_key_and_id(len(plaintext.encode('utf-8')))
+        key_bytes = binascii.unhexlify(key_hex)
+        plaintext_bytes = plaintext.encode('utf-8')
+        
+        # XOR encryption (OTP)
+        ciphertext_bytes = bytearray()
+        for i, byte in enumerate(plaintext_bytes):
+            ciphertext_bytes.append(byte ^ key_bytes[i % len(key_bytes)])
+        
+        # Convert to base64url
+        import base64
+        ciphertext_b64url = base64.urlsafe_b64encode(ciphertext_bytes).decode('ascii').rstrip('=')
+        
+        return jsonify({
+            "key_id": key_id,
+            "ciphertext_b64url": ciphertext_b64url
+        })
+    except Exception as e:
+        return jsonify({"error": "encryption_failed", "detail": str(e)}), 500
+
+@app.post("/api/otp/decrypt")
+def decrypt_otp():
+    """OTP decryption endpoint"""
+    try:
+        body = request.get_json()
+        if not body or "key_id" not in body or "ciphertext_b64url" not in body:
+            return jsonify({"error": "Missing required fields"}), 400
+        
+        key_id = body["key_id"]
+        ciphertext_b64url = body["ciphertext_b64url"]
+        
+        # Convert from base64url
+        import base64
+        # Add padding if needed
+        missing_padding = len(ciphertext_b64url) % 4
+        if missing_padding:
+            ciphertext_b64url += '=' * (4 - missing_padding)
+        ciphertext_bytes = base64.urlsafe_b64decode(ciphertext_b64url)
+        
+        # Get the key
+        key_hex = get_key_hex_by_id(key_id)
+        key_bytes = binascii.unhexlify(key_hex)
+        
+        # XOR decryption (OTP)
+        plaintext_bytes = bytearray()
+        for i, byte in enumerate(ciphertext_bytes):
+            plaintext_bytes.append(byte ^ key_bytes[i % len(key_bytes)])
+        
+        return jsonify({
+            "text": plaintext_bytes.decode('utf-8')
+        }), 200
+    except Exception as e:
+        return jsonify({"error": "decryption_failed", "detail": str(e)}), 500
+
 
 if __name__ == "__main__":
     import os

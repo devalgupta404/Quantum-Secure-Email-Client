@@ -13,7 +13,7 @@ namespace QuMail.EmailProtocol.Controllers
         private static readonly HttpClient Http = new HttpClient();
         private readonly ILogger<AESController> _logger;
 
-        private const string AesBaseUrl = "http://127.0.0.1:8082";
+        private const string AesBaseUrl = "http://aes-server:8081";
 
         public AESController(ILogger<AESController> logger)
         {
