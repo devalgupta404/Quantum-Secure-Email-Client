@@ -921,6 +921,24 @@ public class EmailController : ControllerBase
                     return body;
                     
                 case "PQC_2_LAYER":
+                    // PQC_2_LAYER: OTP(PQC(plaintext)) - decrypt OTP first, then return PQC for frontend
+                    if (TryParseEnvelope(body, out var otpEnvelope2))
+                    {
+                        _logger.LogInformation("Decrypting PQC_2_LAYER: OTP layer first");
+                        var otpDecrypted2 = await DecryptOTPAsync(otpEnvelope2);
+                        
+                        // Check if OTP decryption resulted in PQC envelope
+                        if (TryParsePQCEnvelope(otpDecrypted2, out var pqcEnvelope2))
+                        {
+                            _logger.LogInformation("OTP decrypted to PQC envelope, returning for frontend decryption");
+                            return JsonSerializer.Serialize(pqcEnvelope2, _jsonOptions);
+                        }
+                        
+                        return otpDecrypted2;
+                    }
+                    _logger.LogWarning("Failed to parse OTP envelope for PQC_2_LAYER, returning as-is");
+                    return body;
+                    
                 case "PQC_3_LAYER":
                     if (TryParsePQCEnvelope(body, out var pqcEnvelope))
                     {
@@ -956,18 +974,29 @@ public class EmailController : ControllerBase
                 return await DecryptAESAsync(aesEnvelope);
             }
 
-            // Check if it's PQC envelope format
-            if (TryParsePQCEnvelope(body, out var pqcEnvelope))
-            {
-                _logger.LogInformation("Detected PQC envelope, decrypting with PQC");
-                return await DecryptPQCAsync(pqcEnvelope);
-            }
-
-            // Check if it's OTP envelope format (original format) - LAST
-            if (TryParseEnvelope(body, out var otpEnvelope))
+            // Check if it's OTP envelope format (original format) - this handles PQC_2_LAYER outer layer
+            if (TryParseEnvelope(body, out var otpEnvelope3))
             {
                 _logger.LogInformation("Detected OTP envelope, decrypting with OTP API");
-                return await DecryptOTPAsync(otpEnvelope);
+                var otpDecrypted3 = await DecryptOTPAsync(otpEnvelope3);
+                
+                // After OTP decryption, check if result is PQC-encrypted
+                if (TryParsePQCEnvelope(otpDecrypted3, out var pqcEnvelope3))
+                {
+                    _logger.LogInformation("OTP decrypted to PQC envelope, returning PQC data for frontend decryption");
+                    // Return PQC envelope as JSON for frontend to decrypt with private key
+                    return JsonSerializer.Serialize(pqcEnvelope3, _jsonOptions);
+                }
+                
+                return otpDecrypted3;
+            }
+
+            // Check if it's PQC envelope format (direct PQC without OTP wrapper)
+            if (TryParsePQCEnvelope(body, out var pqcEnvelope4))
+            {
+                _logger.LogInformation("Detected direct PQC envelope, returning for frontend decryption");
+                // Return PQC envelope as JSON for frontend to decrypt with private key
+                return JsonSerializer.Serialize(pqcEnvelope4, _jsonOptions);
             }
 
             // If none of the above, return as-is (plain text)
@@ -1411,6 +1440,36 @@ public class EmailController : ControllerBase
             var bytes = Convert.FromBase64String(a.ContentBase64);
             var contentText = Convert.ToBase64String(bytes);
             var envelope = await EncryptBodyAsync(contentText);
+            encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
+        }
+        return JsonSerializer.Serialize(encrypted, _jsonOptions);
+    }
+
+    private async Task<string?> EncryptAttachmentsPQC2LayerAsync(List<SendAttachment>? attachments, string recipientPublicKey)
+    {
+        if (attachments == null || attachments.Count == 0) return null;
+        
+        var encrypted = new List<object>(attachments.Count);
+        foreach (var a in attachments)
+        {
+            var bytes = Convert.FromBase64String(a.ContentBase64);
+            var contentText = Convert.ToBase64String(bytes);
+            var envelope = await EncryptSingleWithPQC2LayerAsync(contentText, recipientPublicKey);
+            encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
+        }
+        return JsonSerializer.Serialize(encrypted, _jsonOptions);
+    }
+
+    private async Task<string?> EncryptAttachmentsPQC3LayerAsync(List<SendAttachment>? attachments, string recipientPublicKey)
+    {
+        if (attachments == null || attachments.Count == 0) return null;
+        
+        var encrypted = new List<object>(attachments.Count);
+        foreach (var a in attachments)
+        {
+            var bytes = Convert.FromBase64String(a.ContentBase64);
+            var contentText = Convert.ToBase64String(bytes);
+            var envelope = await EncryptSingleWithPQC3LayerAsync(contentText, recipientPublicKey);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
         return JsonSerializer.Serialize(encrypted, _jsonOptions);
