@@ -46,7 +46,7 @@ echo - Database: %DB_NAME%
 echo - JWT Secret: Ready
 echo.
 
-REM Start Key Manager service (http://127.0.0.1:8080)
+REM Start Key Manager service (http://127.0.0.1:2020)
 echo Starting Key Manager service...
 set "KM_SCRIPT=%ROOT%Key_Manager\km\server.py"
 if not exist "%KM_SCRIPT%" (
@@ -54,30 +54,30 @@ if not exist "%KM_SCRIPT%" (
     pause
     exit /b 1
 )
-REM If port 8080 already in use, assume KM is running and skip starting
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8080).TcpTestSucceeded" >nul 2>&1
+REM If port 2020 already in use, assume KM is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2020).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     start "Key Manager" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%Key_Manager\km'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('key_manager_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'server.py' 2>&1 | Tee-Object -FilePath $log -Append"
 ) else (
-    echo Detected Key Manager already listening on 8080; skipping start.
+    echo Detected Key Manager already listening on 2020; skipping start.
 )
 
 REM Wait for Key Manager to be ready (max ~20s)
 set /a __tries_km=0
-echo Waiting for Key Manager (127.0.0.1:8080)...
+echo Waiting for Key Manager (127.0.0.1:2020)...
 :wait_km
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8080).TcpTestSucceeded" >nul 2>&1
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2020).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     set /a __tries_km+=1
     if !__tries_km! geq 20 (
-        echo WARNING: Key Manager did not open port 8080 yet. Continuing...
+        echo WARNING: Key Manager did not open port 2020 yet. Continuing...
     ) else (
         timeout /t 1 >nul
         goto wait_km
     )
 )
 
-REM Start OTP Flask API (runs on http://127.0.0.1:8081)
+REM Start OTP Flask API (runs on http://127.0.0.1:2021)
 echo Starting OTP API service...
 set "OTP_SCRIPT=%ROOT%level1\otp_api_test.py"
 if not exist "%OTP_SCRIPT%" (
@@ -85,15 +85,15 @@ if not exist "%OTP_SCRIPT%" (
     pause
     exit /b 1
 )
-REM If port 8081 already in use, assume OTP API is running and skip starting
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8081).TcpTestSucceeded" >nul 2>&1
+REM If port 2021 already in use, assume OTP API is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2021).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     start "OTP API" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%level1'; $env:ENCODER_EXE='%ENCODER_EXE%'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('otp_api_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'otp_api_test.py' 2>&1 | Tee-Object -FilePath $log -Append"
 ) else (
-    echo Detected OTP API already listening on 8081; skipping start.
+    echo Detected OTP API already listening on 2021; skipping start.
 )
 
-REM Start AES Server (runs on http://127.0.0.1:8082)
+REM Start AES Server (runs on http://127.0.0.1:2022)
 echo Starting AES Server service...
 set "AES_SCRIPT=%ROOT%level2new\server2.py"
 if not exist "%AES_SCRIPT%" (
@@ -101,23 +101,23 @@ if not exist "%AES_SCRIPT%" (
     pause
     exit /b 1
 )
-REM If port 8082 already in use, assume AES Server is running and skip starting
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8082).TcpTestSucceeded" >nul 2>&1
+REM If port 2022 already in use, assume AES Server is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2022).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     start "AES Server" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%level2new'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('aes_server_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'server2.py' 2>&1 | Tee-Object -FilePath $log -Append"
 ) else (
-    echo Detected AES Server already listening on 8082; skipping start.
+    echo Detected AES Server already listening on 2022; skipping start.
 )
 
 REM Wait for OTP API to become available (max ~20s)
 set /a __tries=0
-echo Waiting for OTP API (127.0.0.1:8081)...
+echo Waiting for OTP API (127.0.0.1:2021)...
 :wait_otp
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8081).TcpTestSucceeded" >nul 2>&1
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2021).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     set /a __tries+=1
     if !__tries! geq 20 (
-        echo WARNING: OTP API did not open port 8081 yet. Continuing...
+        echo WARNING: OTP API did not open port 2021 yet. Continuing...
     ) else (
         timeout /t 1 >nul
         goto wait_otp
@@ -126,20 +126,20 @@ if errorlevel 1 (
 
 REM Wait for AES Server to become available (max ~20s)
 set /a __tries=0
-echo Waiting for AES Server (127.0.0.1:8082)...
+echo Waiting for AES Server (127.0.0.1:2022)...
 :wait_aes
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8082).TcpTestSucceeded" >nul 2>&1
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2022).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     set /a __tries+=1
     if !__tries! geq 20 (
-        echo WARNING: AES Server did not open port 8082 yet. Continuing...
+        echo WARNING: AES Server did not open port 2022 yet. Continuing...
     ) else (
         timeout /t 1 >nul
         goto wait_aes
     )
 )
 
-REM Start PQC Server (runs on http://127.0.0.1:8083)
+REM Start PQC Server (runs on http://127.0.0.1:2023)
 echo Starting PQC Server service...
 set "PQC_SCRIPT=%ROOT%level3\pqc_server.py"
 if not exist "%PQC_SCRIPT%" (
@@ -147,23 +147,23 @@ if not exist "%PQC_SCRIPT%" (
     pause
     exit /b 1
 )
-REM If port 8083 already in use, assume PQC Server is running and skip starting
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8083).TcpTestSucceeded" >nul 2>&1
+REM If port 2023 already in use, assume PQC Server is running and skip starting
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2023).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     start "PQC Server" powershell -NoExit -Command "Set-Location -LiteralPath '%ROOT%level3'; $env:PYTHONUNBUFFERED='1'; $log=Join-Path '%LOG_DIR%' ('pqc_server_'+(Get-Date -Format yyyyMMdd_HHmmss_fff)+'_'+$PID+'.log'); Write-Host ('Log: '+$log); python -u 'pqc_server.py' 2>&1 | Tee-Object -FilePath $log -Append"
 ) else (
-    echo Detected PQC Server already listening on 8083; skipping start.
+    echo Detected PQC Server already listening on 2023; skipping start.
 )
 
 REM Wait for PQC Server to become available (max ~20s)
 set /a __tries=0
-echo Waiting for PQC Server (127.0.0.1:8083)...
+echo Waiting for PQC Server (127.0.0.1:2023)...
 :wait_pqc
-powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 8083).TcpTestSucceeded" >nul 2>&1
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 2023).TcpTestSucceeded" >nul 2>&1
 if errorlevel 1 (
     set /a __tries+=1
     if !__tries! geq 20 (
-        echo WARNING: PQC Server did not open port 8083 yet. Continuing...
+        echo WARNING: PQC Server did not open port 2023 yet. Continuing...
     ) else (
         timeout /t 1 >nul
         goto wait_pqc
@@ -171,7 +171,7 @@ if errorlevel 1 (
 )
 
 REM Quick sanity check of OTP encrypt endpoint; write result to a separate health file
-powershell -NoProfile -Command "$p=@{text='health-check'}|ConvertTo-Json; try { $r=Invoke-RestMethod -Uri 'http://127.0.0.1:8081/api/otp/encrypt' -Method Post -ContentType 'application/json' -Body $p; 'OTP encrypt OK' } catch { 'OTP encrypt FAILED: ' + $_.Exception.Message }" >> "%LOG_DIR%\otp_health.txt" 2>&1
+powershell -NoProfile -Command "$p=@{text='health-check'}|ConvertTo-Json; try { $r=Invoke-RestMethod -Uri 'http://127.0.0.1:2021/api/otp/encrypt' -Method Post -ContentType 'application/json' -Body $p; 'OTP encrypt OK' } catch { 'OTP encrypt FAILED: ' + $_.Exception.Message }" >> "%LOG_DIR%\otp_health.txt" 2>&1
 
 REM Resolve API port (try 5000-5010) by parsing TcpTestSucceeded output
 set "API_URL="

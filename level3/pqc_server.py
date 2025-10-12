@@ -2,7 +2,7 @@
 """
 Level 3 PQC (Post-Quantum Cryptography) Server
 Integrates with the real .NET backend for proper Kyber-512 encryption
-Runs on http://127.0.0.1:8083
+Runs on http://127.0.0.1:2023
 """
 
 import json
@@ -211,6 +211,6 @@ if __name__ == '__main__':
     print("  POST /api/pqc/encrypt")
     print("  POST /api/pqc/decrypt")
     print("  GET /health")
-    print("🌐 Server running on http://127.0.0.1:8083")
+    print("🌐 Server running on http://127.0.0.1:2023")
     
-    app.run(host='127.0.0.1', port=8083, debug=True)
+    app.run(host='127.0.0.1', port=2023, debug=True)

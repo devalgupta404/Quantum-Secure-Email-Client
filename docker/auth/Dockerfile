@@ -23,7 +23,7 @@ RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
 USER appuser
 
 # Expose port
-EXPOSE 8083
+EXPOSE 2023
 
 # Set environment variables
 ENV FLASK_APP=auth_server.py
@@ -32,7 +32,7 @@ ENV PYTHONPATH=/app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD curl -f http://localhost:8083/health || exit 1
+  CMD curl -f http://localhost:2023/health || exit 1
 
 # Run the application
 CMD ["python", "auth_server.py"]

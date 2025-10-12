@@ -158,4 +158,4 @@ def api_decrypt():
 if __name__ == "__main__":
     print("SCRIPT_DIR         =", SCRIPT_DIR)
     print("Resolved ENCODER_EXE =", ENCODER_EXE, "exists:", bool(ENCODER_EXE and os.path.exists(ENCODER_EXE)))
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "8081")), debug=False)
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "2021")), debug=False)

@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify
 import requests, subprocess, binascii, os
 
-KM = os.getenv("KM_URL", "http://127.0.0.1:8080")
+KM = os.getenv("KM_URL", "http://127.0.0.1:2020")
 AES_BIN = os.getenv("AES_GCM_BIN", os.path.abspath("./aes_gcm_demo"))  # .exe on Windows
 
 app = Flask(__name__)
@@ -171,4 +171,4 @@ def health_check():
     }), 200 if overall_status == "healthy" else 503
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8082")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","2022")))

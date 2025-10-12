@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 import base64, json, binascii
 import requests, subprocess, binascii, os
 
-KM = os.getenv("KM_URL", "http://127.0.0.1:8080")
+KM = os.getenv("KM_URL", "http://127.0.0.1:2020")
 AES_BIN = os.getenv("AES_GCM_BIN", os.path.abspath("./aes_gcm_demo"))  # .exe on Windows
 
 app = Flask(__name__)
@@ -205,4 +205,4 @@ def decrypt_gcm():
 
 if __name__ == "__main__":
     import os
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","2021")))

@@ -33,7 +33,7 @@ static int extract_key_id(const char *headers_path, char *out, size_t outsz) {
 int km_fetch_new_key(size_t size, const char *key_out, const char *keyid_out) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-        "curl -sSf -D headers.tmp -o \"%s\" \"http://127.0.0.1:8080/otp/keys?size=%lu\"",
+        "curl -sSf -D headers.tmp -o \"%s\" \"http://127.0.0.1:2020/otp/keys?size=%lu\"",
         key_out, (unsigned long)size);
     if (run_cmd(cmd) != 0) return 1;
 
@@ -61,7 +61,7 @@ int km_fetch_key_by_id(const char *key_id, const char *key_out) {
 
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-        "curl -sSf -o \"%s\" \"http://127.0.0.1:8080/otp/keys/%s\"",
+        "curl -sSf -o \"%s\" \"http://127.0.0.1:2020/otp/keys/%s\"",
         key_out, idclean);
     if(run_cmd(cmd) != 0){
         fprintf(stderr, "KM: HTTP fetch failed (bad key_id or KM Down)\n");

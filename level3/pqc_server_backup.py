@@ -2,7 +2,7 @@
 """
 Standalone PQC (Post-Quantum Cryptography) Server
 Provides basic Kyber-512 key generation and encryption endpoints
-Runs on http://127.0.0.1:8083
+Runs on http://127.0.0.1:2023
 """
 
 import json
@@ -170,11 +170,11 @@ def health():
     return jsonify({
         'status': 'OK',
         'service': 'PQC Server',
-        'port': 8083
+        'port': 2023
     })
 
 if __name__ == '__main__':
-    print("Starting PQC Server on http://127.0.0.1:8083")
+    print("Starting PQC Server on http://127.0.0.1:2023")
     print("Endpoints:")
     print("  POST /api/pqc/generate-keypair")
     print("  POST /api/pqc/encrypt") 
@@ -182,4 +182,4 @@ if __name__ == '__main__':
     print("  GET  /api/pqc/health")
     print()
     
-    app.run(host='0.0.0.0', port=8083, debug=False)
+    app.run(host='0.0.0.0', port=2023, debug=False)

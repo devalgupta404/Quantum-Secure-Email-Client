@@ -21,7 +21,7 @@ try {
 # Test services from within Docker network
 Write-Host "Testing Auth Service from Docker network..."
 try {
-    $result = docker exec quantum_backend curl -f http://auth-service:8083/health 2>&1
+    $result = docker exec quantum_backend curl -f http://auth-service:2023/health 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ Auth Service: OK"
     } else {
@@ -33,7 +33,7 @@ try {
 
 Write-Host "Testing Key Manager from Docker network..."
 try {
-    $result = docker exec quantum_backend curl -f http://key-manager:8080/health 2>&1
+    $result = docker exec quantum_backend curl -f http://key-manager:2020/health 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ Key Manager: OK"
     } else {
@@ -45,7 +45,7 @@ try {
 
 Write-Host "Testing AES Server from Docker network..."
 try {
-    $result = docker exec quantum_backend curl -f http://aes-server:8081/health 2>&1
+    $result = docker exec quantum_backend curl -f http://aes-server:2021/health 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ AES Server: OK"
     } else {

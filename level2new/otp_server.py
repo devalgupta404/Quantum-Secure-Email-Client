@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify
 import requests, binascii, os, base64
 
-KM = os.getenv("KM_URL", "http://127.0.0.1:8080")
+KM = os.getenv("KM_URL", "http://127.0.0.1:2020")
 
 app = Flask(__name__)
 
@@ -152,4 +152,4 @@ def health_check():
     }), 200 if overall_status == "healthy" else 503
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT","2021")))

@@ -29,8 +29,8 @@ public class EmailController : ControllerBase
     {
         Timeout = TimeSpan.FromSeconds(30) // Increased from 10s for slow container startup
     };
-    private const string OtpBaseUrl = "http://otp-server:8081"; // OTP API Docker network address
-    private const string AesBaseUrl = "http://aes-server:8082"; // AES API Docker network address
+    private const string OtpBaseUrl = "http://otp-server:2021"; // OTP API Docker network address
+    private const string AesBaseUrl = "http://aes-server:2022"; // AES API Docker network address
     private const int MaxRetries = 3;
 
     public EmailController(

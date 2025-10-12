@@ -21,7 +21,7 @@ RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
 USER appuser
 
 # Expose port
-EXPOSE 8081
+EXPOSE 2021
 
 # Set environment variables
 ENV FLASK_APP=otp_server.py

@@ -28,7 +28,7 @@ RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
 USER appuser
 
 # Expose port
-EXPOSE 8082
+EXPOSE 2022
 
 # Set environment variables
 ENV FLASK_APP=aes_server.py
