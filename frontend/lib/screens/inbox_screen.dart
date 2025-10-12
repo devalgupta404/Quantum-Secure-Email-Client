@@ -55,6 +55,12 @@ class _InboxScreenState extends State<InboxScreen> {
         final email = emails[i];
         print('[inbox] Email $i raw data: ID=${email.id}, Subject="${email.subject}", Body="${email.body}", Method=${email.encryptionMethod}');
         print('[inbox] Email $i Subject length: ${email.subject.length}, Body length: ${email.body.length}');
+        print('[inbox] Email $i Attachments count: ${email.attachments.length}');
+        for (int j = 0; j < email.attachments.length; j++) {
+          final att = email.attachments[j];
+          print('[inbox] Email $i Attachment $j: ${att.fileName}, contentType: ${att.contentType}, base64 length: ${att.contentBase64.length}');
+          print('[inbox] Email $i Attachment $j base64 preview: ${att.contentBase64.substring(0, att.contentBase64.length > 100 ? 100 : att.contentBase64.length)}');
+        }
       }
       
       // Backend now handles all decryption automatically
@@ -425,12 +431,20 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Uint8List? _decodeBase64MaybeUrl(String input) {
+    print('[_decodeBase64MaybeUrl] Input length: ${input.length}');
+    print('[_decodeBase64MaybeUrl] Input preview: ${input.substring(0, input.length > 50 ? 50 : input.length)}');
+
     try {
       // Try standard base64 first
-      return Uint8List.fromList(base64Decode(input));
-    } catch (_) {
+      print('[_decodeBase64MaybeUrl] Trying standard base64...');
+      final result = Uint8List.fromList(base64Decode(input));
+      print('[_decodeBase64MaybeUrl] ✅ Standard base64 decode succeeded, ${result.length} bytes');
+      return result;
+    } catch (e) {
+      print('[_decodeBase64MaybeUrl] ❌ Standard base64 failed: $e');
       try {
         // Try base64url variant
+        print('[_decodeBase64MaybeUrl] Trying base64url variant...');
         var s = input.replaceAll('-', '+').replaceAll('_', '/');
         switch (s.length % 4) {
           case 2:
@@ -440,8 +454,11 @@ class _InboxScreenState extends State<InboxScreen> {
             s += '=';
             break;
         }
-        return Uint8List.fromList(base64Decode(s));
-      } catch (_) {
+        final result = Uint8List.fromList(base64Decode(s));
+        print('[_decodeBase64MaybeUrl] ✅ Base64url decode succeeded, ${result.length} bytes');
+        return result;
+      } catch (e2) {
+        print('[_decodeBase64MaybeUrl] ❌ Base64url decode also failed: $e2');
         return null;
       }
     }
@@ -891,6 +908,12 @@ class _InboxScreenState extends State<InboxScreen> {
                               icon: const Icon(Icons.download_outlined),
                               label: Text(a.fileName),
                               onPressed: () async {
+                                print('[inbox_download] ===== DOWNLOAD CLICKED =====');
+                                print('[inbox_download] File: ${a.fileName}');
+                                print('[inbox_download] Content Type: ${a.contentType}');
+                                print('[inbox_download] Base64 length: ${a.contentBase64.length}');
+                                print('[inbox_download] Base64 preview: ${a.contentBase64.substring(0, a.contentBase64.length > 100 ? 100 : a.contentBase64.length)}');
+
                                 // Show downloading dialog
                                 if (!mounted) return;
                                 showDialog(
@@ -909,12 +932,20 @@ class _InboxScreenState extends State<InboxScreen> {
                                 );
 
                                 try {
+                                  print('[inbox_download] Attempting to decode base64...');
                                   final data = _decodeBase64MaybeUrl(a.contentBase64);
                                   if (data == null) {
+                                    print('[inbox_download] ❌ Failed to decode base64!');
                                     if (mounted) Navigator.pop(context);
                                     setState(() { _attachmentStatus = 'Failed to decode ${a.fileName}'; });
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('Failed to decode attachment: ${a.fileName}'), backgroundColor: Colors.red)
+                                      );
+                                    }
                                     return;
                                   }
+                                  print('[inbox_download] ✅ Successfully decoded base64, ${data.length} bytes');
 
                                   final ext = _inferExt(a.fileName, a.contentType);
                                   if (ext.isEmpty) {

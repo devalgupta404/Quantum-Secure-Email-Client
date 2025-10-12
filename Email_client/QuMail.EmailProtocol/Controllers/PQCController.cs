@@ -17,15 +17,18 @@ public class PQCController : ControllerBase
 {
     private readonly Level3KyberPQC _kyberPQC;
     private readonly Level3PQCEmailService _pqcEmailService;
+    private readonly Level3HybridEncryption _hybridEncryption;
     private readonly AuthDbContext _context;
 
     public PQCController(
         Level3KyberPQC kyberPQC,
         Level3PQCEmailService pqcEmailService,
+        Level3HybridEncryption hybridEncryption,
         AuthDbContext context)
     {
         _kyberPQC = kyberPQC ?? throw new ArgumentNullException(nameof(kyberPQC));
         _pqcEmailService = pqcEmailService ?? throw new ArgumentNullException(nameof(pqcEmailService));
+        _hybridEncryption = hybridEncryption ?? throw new ArgumentNullException(nameof(hybridEncryption));
         _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
@@ -157,17 +160,34 @@ public class PQCController : ControllerBase
                 });
             }
 
-            // Try to decrypt with the provided encryptedKeyId
-            // If it fails and the encryptedKeyId looks like a plain keyId (starts with "PQC-"),
-            // we'll handle it as a legacy email
+            // Route to appropriate decryption method based on UseAES flag
+            // UseAES=true: 3-layer encryption (PQC + AES + OTP) using Level3HybridEncryption
+            // UseAES=false: 2-layer encryption (PQC + OTP) using Level3PQCEmailService
             string decrypted;
             try
             {
-                decrypted = _pqcEmailService.DecryptEmail(
-                    request.EncryptedBody,
-                    request.PQCCiphertext,
-                    request.EncryptedKeyId,
-                    request.PrivateKey);
+                if (request.UseAES)
+                {
+                    // 3-layer decryption path (PQC + AES + OTP)
+                    Console.WriteLine("[PQCController] Using 3-layer decryption (PQC + AES + OTP)");
+                    decrypted = _hybridEncryption.DecryptAsync(
+                        request.EncryptedBody,
+                        request.PQCCiphertext,
+                        request.EncryptedKeyId,
+                        request.PrivateKey,
+                        request.Algorithm ?? "Kyber512",
+                        usedAES: true).Result;
+                }
+                else
+                {
+                    // 2-layer decryption path (PQC + OTP)
+                    Console.WriteLine("[PQCController] Using 2-layer decryption (PQC + OTP)");
+                    decrypted = _pqcEmailService.DecryptEmail(
+                        request.EncryptedBody,
+                        request.PQCCiphertext,
+                        request.EncryptedKeyId,
+                        request.PrivateKey);
+                }
             }
             catch (Exception) when (request.EncryptedKeyId?.StartsWith("PQC-") == true)
             {
@@ -435,6 +455,8 @@ public class PQCDecryptRequest
     public string PQCCiphertext { get; set; } = string.Empty;
     public string EncryptedKeyId { get; set; } = string.Empty; // NEW: Required for KeyManager
     public string PrivateKey { get; set; } = string.Empty;
+    public string? Algorithm { get; set; } // NEW: PQC algorithm used (Kyber512/Kyber1024)
+    public bool UseAES { get; set; } = false; // NEW: True for 3-layer (PQC+AES+OTP), false for 2-layer (PQC+OTP)
 }
 
 public class ValidateKeyRequest

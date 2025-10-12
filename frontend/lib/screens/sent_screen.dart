@@ -72,8 +72,8 @@ class _SentScreenState extends State<SentScreen> {
             final subjectEnvelope = jsonDecode(email.subject);
             final bodyEnvelope = jsonDecode(email.body);
 
-            final subUri = Uri.parse('http://localhost:5001/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(subjectEnvelope))}');
-            final bodyUri = Uri.parse('http://localhost:5001/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(bodyEnvelope))}');
+            final subUri = Uri.parse('https://quantum.pointblank.club/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(subjectEnvelope))}');
+            final bodyUri = Uri.parse('https://quantum.pointblank.club/api/aes/decrypt?envelope=${Uri.encodeComponent(jsonEncode(bodyEnvelope))}');
 
             final subjectResponse = await http.get(subUri);
             final bodyResponse = await http.get(bodyUri);

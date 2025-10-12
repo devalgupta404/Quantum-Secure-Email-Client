@@ -640,6 +640,16 @@ public class EmailController : ControllerBase
             if (TryParseEnvelope(email.Subject, out var otpSubjectEnvelope))
             {
                 pqcSubject = await DecryptOTPAsync(otpSubjectEnvelope);
+                // Check if OTP decryption failed
+                if (pqcSubject == "OTP decryption failed" || pqcSubject == "Decryption failed")
+                {
+                    _logger.LogError("OTP decryption failed for subject");
+                    return BadRequest(new {
+                        success = false,
+                        message = "Failed to decrypt email: OTP decryption failed for subject",
+                        detail = "The OTP service may be unavailable or the encryption key may have expired"
+                    });
+                }
             }
             else
             {
@@ -650,6 +660,16 @@ public class EmailController : ControllerBase
             if (TryParseEnvelope(email.Body, out var otpBodyEnvelope))
             {
                 pqcBody = await DecryptOTPAsync(otpBodyEnvelope);
+                // Check if OTP decryption failed
+                if (pqcBody == "OTP decryption failed" || pqcBody == "Decryption failed")
+                {
+                    _logger.LogError("OTP decryption failed for body");
+                    return BadRequest(new {
+                        success = false,
+                        message = "Failed to decrypt email: OTP decryption failed for body",
+                        detail = "The OTP service may be unavailable or the encryption key may have expired"
+                    });
+                }
             }
             else
             {
@@ -757,10 +777,19 @@ public class EmailController : ControllerBase
             // PHASE 1: Decrypt OTP layer (outermost)
             _logger.LogInformation("Decrypting OTP layer for subject and body");
             string aesSubject, aesBody;
+            bool subjectDecryptionFailed = false;
+            bool bodyDecryptionFailed = false;
 
             if (TryParseEnvelope(email.Subject, out var otpSubjectEnvelope))
             {
                 aesSubject = await DecryptOTPAsync(otpSubjectEnvelope);
+                // Check if OTP decryption failed
+                if (aesSubject == "OTP decryption failed" || aesSubject == "Decryption failed")
+                {
+                    _logger.LogWarning("OTP decryption failed for subject, using fallback message");
+                    aesSubject = "[Decryption Failed - OTP key may have expired]";
+                    subjectDecryptionFailed = true;
+                }
             }
             else
             {
@@ -771,6 +800,13 @@ public class EmailController : ControllerBase
             if (TryParseEnvelope(email.Body, out var otpBodyEnvelope))
             {
                 aesBody = await DecryptOTPAsync(otpBodyEnvelope);
+                // Check if OTP decryption failed
+                if (aesBody == "OTP decryption failed" || aesBody == "Decryption failed")
+                {
+                    _logger.LogWarning("OTP decryption failed for body, using fallback message");
+                    aesBody = "[Decryption Failed - OTP key may have expired. The encryption key for this message is no longer available.]";
+                    bodyDecryptionFailed = true;
+                }
             }
             else
             {
@@ -778,31 +814,51 @@ public class EmailController : ControllerBase
                 aesBody = email.Body;
             }
 
-            // PHASE 2: Decrypt AES layer (middle)
+            // PHASE 2: Decrypt AES layer (middle) - skip if OTP decryption failed
             _logger.LogInformation("Decrypting AES layer for subject and body");
             string pqcSubject, pqcBody;
 
-            if (TryParseAESEnvelope(aesSubject, out var aesSubjectEnvelope))
+            if (!subjectDecryptionFailed && TryParseAESEnvelope(aesSubject, out var aesSubjectEnvelope))
             {
                 pqcSubject = await DecryptAESAsync(aesSubjectEnvelope);
+                // Check if AES decryption failed
+                if (pqcSubject.StartsWith("AES decryption failed"))
+                {
+                    _logger.LogWarning("AES decryption failed for subject, using fallback message");
+                    pqcSubject = "[Decryption Failed - AES decryption error]";
+                    subjectDecryptionFailed = true;
+                }
             }
             else
             {
-                _logger.LogWarning("Failed to parse AES envelope for subject");
+                if (!subjectDecryptionFailed)
+                {
+                    _logger.LogWarning("Failed to parse AES envelope for subject");
+                }
                 pqcSubject = aesSubject;
             }
 
-            if (TryParseAESEnvelope(aesBody, out var aesBodyEnvelope))
+            if (!bodyDecryptionFailed && TryParseAESEnvelope(aesBody, out var aesBodyEnvelope))
             {
                 pqcBody = await DecryptAESAsync(aesBodyEnvelope);
+                // Check if AES decryption failed
+                if (pqcBody.StartsWith("AES decryption failed"))
+                {
+                    _logger.LogWarning("AES decryption failed for body, using fallback message");
+                    pqcBody = "[Decryption Failed - AES decryption error. The encryption key for this message is no longer available.]";
+                    bodyDecryptionFailed = true;
+                }
             }
             else
             {
-                _logger.LogWarning("Failed to parse AES envelope for body");
+                if (!bodyDecryptionFailed)
+                {
+                    _logger.LogWarning("Failed to parse AES envelope for body");
+                }
                 pqcBody = aesBody;
             }
 
-            // PHASE 3: Decrypt attachments from OTP+AES layers to PQC layer
+            // PHASE 3: Decrypt attachments from OTP+AES layers to PQC layer - continue even if some fail
             _logger.LogInformation("Decrypting attachments for PQC_3_LAYER email");
             string? pqcAttachmentsJson = null;
             if (!string.IsNullOrWhiteSpace(email.Attachments))
@@ -813,29 +869,64 @@ public class EmailController : ControllerBase
                     if (attachmentsList != null && attachmentsList.Count > 0)
                     {
                         var decryptedAttachments = new List<object>();
-                        foreach (var item in attachmentsList)
+                        for (int idx = 0; idx < attachmentsList.Count; idx++)
                         {
-                            var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() : null;
-                            var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() : null;
-                            var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
-
-                            if (!string.IsNullOrWhiteSpace(fileName) && !string.IsNullOrWhiteSpace(envelope))
+                            try
                             {
-                                // Decrypt OTP layer first
-                                if (TryParseEnvelope(envelope, out var otpEnvelope))
-                                {
-                                    var aesEnvelope = await DecryptOTPAsync(otpEnvelope);
+                                var item = attachmentsList[idx];
+                                var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() : null;
+                                var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() : null;
+                                var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
 
-                                    // Then decrypt AES layer to get PQC envelope
-                                    if (TryParseAESEnvelope(aesEnvelope, out var aesEnvelopeObj))
+                                if (!string.IsNullOrWhiteSpace(fileName) && !string.IsNullOrWhiteSpace(envelope))
+                                {
+                                    _logger.LogInformation("Processing attachment {Index}: {FileName}", idx, fileName);
+
+                                    // Decrypt OTP layer first
+                                    if (TryParseEnvelope(envelope, out var otpEnvelope))
                                     {
-                                        var pqcEnvelope = await DecryptAESAsync(aesEnvelopeObj);
-                                        decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
+                                        var aesEnvelope = await DecryptOTPAsync(otpEnvelope);
+
+                                        // Check if OTP decryption failed
+                                        if (aesEnvelope == "OTP decryption failed" || aesEnvelope == "Decryption failed")
+                                        {
+                                            _logger.LogWarning("OTP decryption failed for attachment {Index}: {FileName}, skipping", idx, fileName);
+                                            continue;
+                                        }
+
+                                        // Then decrypt AES layer to get PQC envelope
+                                        if (TryParseAESEnvelope(aesEnvelope, out var aesEnvelopeObj))
+                                        {
+                                            var pqcEnvelope = await DecryptAESAsync(aesEnvelopeObj);
+
+                                            // Check if AES decryption failed
+                                            if (pqcEnvelope.StartsWith("AES decryption failed"))
+                                            {
+                                                _logger.LogWarning("AES decryption failed for attachment {Index}: {FileName}, skipping", idx, fileName);
+                                                continue;
+                                            }
+
+                                            decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
+                                            _logger.LogInformation("Successfully decrypted attachment {Index}: {FileName}", idx, fileName);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning("Failed to parse AES envelope for attachment {Index}: {FileName}", idx, fileName);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("Failed to parse OTP envelope for attachment {Index}: {FileName}", idx, fileName);
                                     }
                                 }
                             }
+                            catch (Exception attEx)
+                            {
+                                _logger.LogError(attEx, "Failed to decrypt individual attachment {Index}, continuing with others", idx);
+                            }
                         }
                         pqcAttachmentsJson = JsonSerializer.Serialize(decryptedAttachments, _jsonOptions);
+                        _logger.LogInformation("Successfully decrypted {Count} out of {Total} attachments", decryptedAttachments.Count, attachmentsList.Count);
                     }
                 }
                 catch (Exception ex)

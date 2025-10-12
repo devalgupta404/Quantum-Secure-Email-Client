@@ -6,7 +6,7 @@ import '../models/user.dart';
 import '../models/auth_requests.dart';
 
 class AuthService {
-  static const String _baseUrl = 'http://localhost:5001/api';
+  static const String _baseUrl = 'https://quantum.pointblank.club/api';
   static const String _tokenKey = 'auth_token';
 
   Future<AuthResponse> login(String email, String password) async {

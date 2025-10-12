@@ -57,7 +57,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
       final recipientEmail = _toController.text.trim();
       if (recipientEmail.isNotEmpty) {
         try {
-          final resp = await http.get(Uri.parse('http://localhost:5001/api/email/pqc/public-key/${Uri.encodeComponent(recipientEmail)}'));
+          final resp = await http.get(Uri.parse('https://quantum.pointblank.club/api/email/pqc/public-key/${Uri.encodeComponent(recipientEmail)}'));
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body) as Map<String, dynamic>;
             final pk = (data['data'] as Map<String, dynamic>)['publicKey'] as String;

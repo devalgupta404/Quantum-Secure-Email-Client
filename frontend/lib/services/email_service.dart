@@ -5,7 +5,7 @@ import '../database/database_helper.dart';
 import '../models/sent_pqc_email.dart';
 
 class EmailService {
-  static const String _baseUrl = 'http://localhost:5001/api';
+  static const String _baseUrl = 'https://quantum.pointblank.club/api';
   // PQC key pairs with persistence
   static String? _pqcPrivateKey;
   static String? _pqcPublicKey;
@@ -51,7 +51,7 @@ class EmailService {
     try {
       print('[EmailService] Generating new PQC key pair...');
       final response = await http.post(
-        Uri.parse('http://localhost:5001/api/pqc/generate-keypair'),
+        Uri.parse('$_baseUrl/pqc/generate-keypair'),
         headers: {'Content-Type': 'application/json'},
       );
 
@@ -267,7 +267,7 @@ class EmailService {
     try {
       print('[EmailService] Encrypting with PQC on frontend...');
       final response = await http.post(
-        Uri.parse('http://localhost:5001/api/pqc/encrypt'),
+        Uri.parse('$_baseUrl/pqc/encrypt'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'plaintext': plaintext,
@@ -298,25 +298,33 @@ class EmailService {
 
       print('[EmailService] Decrypting PQC data on frontend...');
 
-      // Parse the PQC envelope to extract encryptedBody and pqcCiphertext
+      // Parse the PQC envelope to extract all fields
       final envelope = jsonDecode(pqcEncryptedData) as Map<String, dynamic>;
       final encryptedBody = envelope['encryptedBody'] as String?;
       final pqcCiphertext = envelope['pqcCiphertext'] as String?;
       final encryptedKeyId = envelope['encryptedKeyId'] as String? ?? envelope['keyId'] as String? ?? '';
+
+      // NEW: Extract algorithm and useAES for proper 3-layer decryption
+      final algorithm = envelope['algorithm'] as String? ?? 'Kyber512';
+      final useAES = envelope['useAES'] as bool? ?? false;
 
       if (encryptedBody == null || pqcCiphertext == null) {
         print('[EmailService] Invalid PQC envelope: missing encryptedBody or pqcCiphertext');
         return null;
       }
 
+      print('[EmailService] Decryption parameters: algorithm=$algorithm, useAES=$useAES');
+
       final response = await http.post(
-        Uri.parse('http://localhost:5001/api/pqc/decrypt'),
+        Uri.parse('$_baseUrl/pqc/decrypt'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'encryptedBody': encryptedBody,
           'pqcCiphertext': pqcCiphertext,
           'encryptedKeyId': encryptedKeyId,
           'privateKey': _pqcPrivateKey,
+          'algorithm': algorithm,
+          'useAES': useAES,
         }),
       );
 
@@ -613,13 +621,13 @@ class EmailService {
         print('[sendEmail][PQC_2_LAYER] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
         // Encrypt subject
         final pqcSub = await http.post(
-          Uri.parse('http://localhost:5001/api/pqc/encrypt'),
+          Uri.parse('$_baseUrl/pqc/encrypt'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'plaintext': subject, 'recipientPublicKey': actualRecipientPublicKey}),
         );
         // Encrypt body
         final pqcBody = await http.post(
-          Uri.parse('http://localhost:5001/api/pqc/encrypt'),
+          Uri.parse('$_baseUrl/pqc/encrypt'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'plaintext': body, 'recipientPublicKey': actualRecipientPublicKey}),
         );
@@ -655,12 +663,12 @@ class EmailService {
         };
 
         final pqcSub = await http.post(
-          Uri.parse('http://localhost:5001/api/pqc/v2/encrypt'),
+          Uri.parse('$_baseUrl/pqc/v2/encrypt'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(encReqSubject),
         );
         final pqcBody = await http.post(
-          Uri.parse('http://localhost:5001/api/pqc/v2/encrypt'),
+          Uri.parse('$_baseUrl/pqc/v2/encrypt'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(encReqBody),
         );
@@ -731,13 +739,36 @@ class EmailService {
           final pqcEncryptedSubject = emailData['pqcEncryptedSubject'] as String;
           final pqcEncryptedBody = emailData['pqcEncryptedBody'] as String;
 
-          // Decrypt PQC layer on frontend
-          final decryptedSubject = await decryptWithPqcFrontend(pqcEncryptedSubject);
-          final decryptedBody = await decryptWithPqcFrontend(pqcEncryptedBody);
+          // Decrypt PQC layer on frontend - handle fallback messages
+          String decryptedSubject;
+          String decryptedBody;
 
-          if (decryptedSubject == null || decryptedBody == null) {
-            print('[EmailService] Failed to decrypt PQC_2_LAYER data on frontend');
-            return null;
+          // Check if subject is a fallback message (not encrypted)
+          if (pqcEncryptedSubject.startsWith('[Decryption Failed')) {
+            decryptedSubject = pqcEncryptedSubject;
+            print('[EmailService] Using fallback subject: $decryptedSubject');
+          } else {
+            final tempSubject = await decryptWithPqcFrontend(pqcEncryptedSubject);
+            if (tempSubject == null) {
+              print('[EmailService] Failed to decrypt PQC_2_LAYER subject on frontend');
+              decryptedSubject = '[Decryption Failed - Unable to decrypt subject]';
+            } else {
+              decryptedSubject = tempSubject;
+            }
+          }
+
+          // Check if body is a fallback message (not encrypted)
+          if (pqcEncryptedBody.startsWith('[Decryption Failed')) {
+            decryptedBody = pqcEncryptedBody;
+            print('[EmailService] Using fallback body: $decryptedBody');
+          } else {
+            final tempBody = await decryptWithPqcFrontend(pqcEncryptedBody);
+            if (tempBody == null) {
+              print('[EmailService] Failed to decrypt PQC_2_LAYER body on frontend');
+              decryptedBody = '[Decryption Failed - Unable to decrypt message body]';
+            } else {
+              decryptedBody = tempBody;
+            }
           }
 
           // Decrypt attachments (if present)
@@ -786,11 +817,22 @@ class EmailService {
             isRead: emailData['isRead'] as bool,
             encryptionMethod: emailData['encryptionMethod'] as String,
           );
+        } else {
+          // Backend returned an error
+          print('[EmailService] Backend error: ${data['message'] ?? 'Unknown error'}');
+          return null;
         }
+      } else {
+        // HTTP error from backend
+        print('[EmailService] Failed to fetch PQC_2_LAYER email: ${response.statusCode}');
+        try {
+          final errorData = jsonDecode(response.body);
+          print('[EmailService] Error details: ${errorData['message'] ?? 'Unknown error'}');
+        } catch (_) {
+          // Ignore JSON parsing errors for error responses
+        }
+        return null;
       }
-
-      print('[EmailService] Failed to fetch PQC_2_LAYER email: ${response.statusCode}');
-      return null;
     } catch (e) {
       print('[EmailService] Exception in getPqc2Email: $e');
       return null;
@@ -816,13 +858,36 @@ class EmailService {
           final pqcEncryptedSubject = emailData['pqcEncryptedSubject'] as String;
           final pqcEncryptedBody = emailData['pqcEncryptedBody'] as String;
 
-          // Decrypt PQC layer on frontend
-          final decryptedSubject = await decryptWithPqcFrontend(pqcEncryptedSubject);
-          final decryptedBody = await decryptWithPqcFrontend(pqcEncryptedBody);
+          // Decrypt PQC layer on frontend - handle fallback messages
+          String decryptedSubject;
+          String decryptedBody;
 
-          if (decryptedSubject == null || decryptedBody == null) {
-            print('[EmailService] Failed to decrypt PQC_3_LAYER data on frontend');
-            return null;
+          // Check if subject is a fallback message (not encrypted)
+          if (pqcEncryptedSubject.startsWith('[Decryption Failed')) {
+            decryptedSubject = pqcEncryptedSubject;
+            print('[EmailService] Using fallback subject: $decryptedSubject');
+          } else {
+            final tempSubject = await decryptWithPqcFrontend(pqcEncryptedSubject);
+            if (tempSubject == null) {
+              print('[EmailService] Failed to decrypt PQC_3_LAYER subject on frontend');
+              decryptedSubject = '[Decryption Failed - Unable to decrypt subject]';
+            } else {
+              decryptedSubject = tempSubject;
+            }
+          }
+
+          // Check if body is a fallback message (not encrypted)
+          if (pqcEncryptedBody.startsWith('[Decryption Failed')) {
+            decryptedBody = pqcEncryptedBody;
+            print('[EmailService] Using fallback body: $decryptedBody');
+          } else {
+            final tempBody = await decryptWithPqcFrontend(pqcEncryptedBody);
+            if (tempBody == null) {
+              print('[EmailService] Failed to decrypt PQC_3_LAYER body on frontend');
+              decryptedBody = '[Decryption Failed - Unable to decrypt message body]';
+            } else {
+              decryptedBody = tempBody;
+            }
           }
 
           // Decrypt attachments (if present)
@@ -871,11 +936,22 @@ class EmailService {
             isRead: emailData['isRead'] as bool,
             encryptionMethod: emailData['encryptionMethod'] as String,
           );
+        } else {
+          // Backend returned an error
+          print('[EmailService] Backend error: ${data['message'] ?? 'Unknown error'}');
+          return null;
         }
+      } else {
+        // HTTP error from backend
+        print('[EmailService] Failed to fetch PQC_3_LAYER email: ${response.statusCode}');
+        try {
+          final errorData = jsonDecode(response.body);
+          print('[EmailService] Error details: ${errorData['message'] ?? 'Unknown error'}');
+        } catch (_) {
+          // Ignore JSON parsing errors for error responses
+        }
+        return null;
       }
-
-      print('[EmailService] Failed to fetch PQC_3_LAYER email: ${response.statusCode}');
-      return null;
     } catch (e) {
       print('[EmailService] Exception in getPqc3Email: $e');
       return null;
