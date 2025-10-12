@@ -316,16 +316,18 @@ public class EmailController : ControllerBase
 
                     case "PQC_2_LAYER":
                         _logger.LogInformation("Using PQC 2-layer encryption");
-                        subjectEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Subject, request.RecipientPublicKey);
-                        bodyEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Body, request.RecipientPublicKey);
-                        attachmentsJson = await EncryptAttachmentsPQC2LayerAsync(request.Attachments, request.RecipientPublicKey);
+                        var pqc2Result = await EncryptWithPQC2LayerAsync(request.Subject, request.Body, request.RecipientPublicKey, request.Attachments);
+                        subjectEnvelope = pqc2Result.SubjectEnvelope;
+                        bodyEnvelope = pqc2Result.BodyEnvelope;
+                        attachmentsJson = pqc2Result.AttachmentsJson;
                         break;
 
                     case "PQC_3_LAYER":
                         _logger.LogInformation("Using PQC 3-layer encryption");
-                        subjectEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Subject, request.RecipientPublicKey);
-                        bodyEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Body, request.RecipientPublicKey);
-                        attachmentsJson = await EncryptAttachmentsPQC3LayerAsync(request.Attachments, request.RecipientPublicKey);
+                        var pqc3Result = await EncryptWithPQC3LayerAsync(request.Subject, request.Body, request.RecipientPublicKey, request.Attachments);
+                        subjectEnvelope = pqc3Result.SubjectEnvelope;
+                        bodyEnvelope = pqc3Result.BodyEnvelope;
+                        attachmentsJson = pqc3Result.AttachmentsJson;
                         break;
 
                     default:
@@ -1210,16 +1212,43 @@ public class EmailController : ControllerBase
             var result = new List<object>(list.Count);
             foreach (var item in list)
             {
-                var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() : null;
-                var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() : null;
-                var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
-                if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(contentType) || string.IsNullOrWhiteSpace(envelope))
+                // Try camelCase first (encrypted format)
+                var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() :
+                              (item.ContainsKey("FileName") ? item["FileName"]?.ToString() : null);
+                var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() :
+                                 (item.ContainsKey("ContentType") ? item["ContentType"]?.ToString() : null);
+
+                if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(contentType))
                 {
+                    _logger.LogWarning("Skipping attachment with missing fileName or contentType");
                     continue;
                 }
-                var decrypted = await TryDecryptBodyAsync(envelope);
-                // decrypted is base64 content text
-                result.Add(new { fileName, contentType, contentBase64 = decrypted });
+
+                // Check if attachment has encrypted envelope or plain base64
+                var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
+                var plainBase64 = item.ContainsKey("contentBase64") ? item["contentBase64"]?.ToString() :
+                                 (item.ContainsKey("ContentBase64") ? item["ContentBase64"]?.ToString() : null);
+
+                string contentBase64;
+                if (!string.IsNullOrWhiteSpace(envelope))
+                {
+                    // Encrypted attachment - decrypt it
+                    _logger.LogInformation("Decrypting attachment: {FileName}", fileName);
+                    contentBase64 = await TryDecryptBodyAsync(envelope);
+                }
+                else if (!string.IsNullOrWhiteSpace(plainBase64))
+                {
+                    // Plain attachment (happens when frontend pre-encrypts subject/body)
+                    _logger.LogWarning("Found plain (unencrypted) attachment: {FileName}", fileName);
+                    contentBase64 = plainBase64;
+                }
+                else
+                {
+                    _logger.LogWarning("Skipping attachment with no envelope or contentBase64: {FileName}", fileName);
+                    continue;
+                }
+
+                result.Add(new { fileName, contentType, contentBase64 });
             }
             return result.ToArray();
         }

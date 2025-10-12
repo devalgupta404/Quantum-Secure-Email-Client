@@ -140,13 +140,72 @@ class _SentScreenState extends State<SentScreen> {
                     if (isImg) {
                       final bytes = _decodeBase64MaybeUrl(a.contentBase64);
                       if (bytes != null) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.memory(
-                            bytes,
-                            width: 120,
-                            height: 120,
-                            fit: BoxFit.cover,
+                        return GestureDetector(
+                          onTap: () async {
+                            // Show downloading dialog
+                            if (!mounted) return;
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (context) => AlertDialog(
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const CircularProgressIndicator(),
+                                    const SizedBox(height: 16),
+                                    Text('Downloading ${a.fileName}...'),
+                                  ],
+                                ),
+                              ),
+                            );
+
+                            try {
+                              await FileSaver.instance.saveFile(
+                                name: a.fileName,
+                                bytes: bytes,
+                                ext: _inferExt(a.fileName, a.contentType),
+                                mimeType: MimeType.other,
+                              );
+
+                              if (mounted) Navigator.pop(context);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) Navigator.pop(context);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                                );
+                              }
+                            }
+                          },
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.memory(
+                                  bytes,
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned(
+                                right: 4,
+                                top: 4,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Icon(Icons.download, color: Colors.white, size: 16),
+                                ),
+                              ),
+                            ],
                           ),
                         );
                       }
@@ -155,19 +214,56 @@ class _SentScreenState extends State<SentScreen> {
                       label: Text(a.fileName),
                       avatar: const Icon(Icons.download_outlined),
                       onPressed: () async {
-                        final data = _decodeBase64MaybeUrl(a.contentBase64);
-                        if (data == null) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to decode attachment')));
-                          }
-                          return;
-                        }
-                        await FileSaver.instance.saveFile(
-                          name: a.fileName,
-                          bytes: data,
-                          ext: _inferExt(a.fileName, a.contentType),
-                          mimeType: MimeType.other,
+                        // Show downloading dialog
+                        if (!mounted) return;
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (context) => AlertDialog(
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(height: 16),
+                                Text('Downloading ${a.fileName}...'),
+                              ],
+                            ),
+                          ),
                         );
+
+                        try {
+                          final data = _decodeBase64MaybeUrl(a.contentBase64);
+                          if (data == null) {
+                            if (mounted) Navigator.pop(context);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Failed to decode attachment'))
+                              );
+                            }
+                            return;
+                          }
+
+                          await FileSaver.instance.saveFile(
+                            name: a.fileName,
+                            bytes: data,
+                            ext: _inferExt(a.fileName, a.contentType),
+                            mimeType: MimeType.other,
+                          );
+
+                          if (mounted) Navigator.pop(context);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) Navigator.pop(context);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                            );
+                          }
+                        }
                       },
                     );
                   }).toList(),

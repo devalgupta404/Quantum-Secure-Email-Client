@@ -198,13 +198,72 @@ class _InboxScreenState extends State<InboxScreen> {
                     if (isImg) {
                       final bytes = _decodeBase64MaybeUrl(a.contentBase64);
                       if (bytes != null) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.memory(
-                            bytes,
-                            width: 120,
-                            height: 120,
-                            fit: BoxFit.cover,
+                        return GestureDetector(
+                          onTap: () async {
+                            // Show downloading dialog
+                            if (!mounted) return;
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (context) => AlertDialog(
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const CircularProgressIndicator(),
+                                    const SizedBox(height: 16),
+                                    Text('Downloading ${a.fileName}...'),
+                                  ],
+                                ),
+                              ),
+                            );
+
+                            try {
+                              await FileSaver.instance.saveFile(
+                                name: a.fileName,
+                                bytes: bytes,
+                                ext: _inferExt(a.fileName, a.contentType),
+                                mimeType: MimeType.other,
+                              );
+
+                              if (mounted) Navigator.pop(context);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) Navigator.pop(context);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                                );
+                              }
+                            }
+                          },
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.memory(
+                                  bytes,
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned(
+                                right: 4,
+                                top: 4,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Icon(Icons.download, color: Colors.white, size: 16),
+                                ),
+                              ),
+                            ],
                           ),
                         );
                       }
@@ -213,18 +272,36 @@ class _InboxScreenState extends State<InboxScreen> {
                       label: Text(a.fileName),
                       avatar: const Icon(Icons.download_outlined),
                       onPressed: () async {
-                                final data = _decodeBase64MaybeUrl(a.contentBase64);
-                                if (data == null) {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to decode attachment')));
-                                  }
-                                  return;
-                                }
-                                final ext = _inferExt(a.fileName, a.contentType);
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saving ${a.fileName}...')));
-                                }
+                                // Show downloading dialog
+                                if (!mounted) return;
+                                showDialog(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (context) => AlertDialog(
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const CircularProgressIndicator(),
+                                        const SizedBox(height: 16),
+                                        Text('Downloading ${a.fileName}...'),
+                                      ],
+                                    ),
+                                  ),
+                                );
+
                                 try {
+                                  final data = _decodeBase64MaybeUrl(a.contentBase64);
+                                  if (data == null) {
+                                    if (mounted) Navigator.pop(context);
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Failed to decode attachment'))
+                                      );
+                                    }
+                                    return;
+                                  }
+
+                                  final ext = _inferExt(a.fileName, a.contentType);
                                   if (ext.isEmpty) {
                                     await FileSaver.instance.saveFile(
                                       name: a.fileName,
@@ -239,12 +316,19 @@ class _InboxScreenState extends State<InboxScreen> {
                                       mimeType: MimeType.other,
                                     );
                                   }
+
+                                  if (mounted) Navigator.pop(context);
                                   if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved ${a.fileName}')));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                                    );
                                   }
-                                } catch (_) {
+                                } catch (e) {
+                                  if (mounted) Navigator.pop(context);
                                   if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save failed')));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                                    );
                                   }
                                 }
                       },
@@ -731,13 +815,74 @@ class _InboxScreenState extends State<InboxScreen> {
                             if (isImg) {
                               try {
                                 final bytes = base64Decode(a.contentBase64);
-                                return ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.memory(
-                                    Uint8List.fromList(bytes),
-                                    width: 120,
-                                    height: 120,
-                                    fit: BoxFit.cover,
+                                return GestureDetector(
+                                  onTap: () async {
+                                    // Show downloading dialog
+                                    if (!mounted) return;
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) => AlertDialog(
+                                        content: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const CircularProgressIndicator(),
+                                            const SizedBox(height: 16),
+                                            Text('Downloading ${a.fileName}...'),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+
+                                    try {
+                                      await FileSaver.instance.saveFile(
+                                        name: a.fileName,
+                                        bytes: Uint8List.fromList(bytes),
+                                        ext: _inferExt(a.fileName, a.contentType),
+                                        mimeType: MimeType.other,
+                                      );
+
+                                      if (mounted) Navigator.pop(context);
+                                      setState(() { _attachmentStatus = 'Downloaded ${a.fileName}'; });
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (mounted) Navigator.pop(context);
+                                      setState(() { _attachmentStatus = 'Download failed: $e'; });
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                                        );
+                                      }
+                                    }
+                                  },
+                                  child: Stack(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.memory(
+                                          Uint8List.fromList(bytes),
+                                          width: 120,
+                                          height: 120,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                      Positioned(
+                                        right: 4,
+                                        top: 4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black54,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: const Icon(Icons.download, color: Colors.white, size: 16),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 );
                               } catch (_) {}
@@ -746,31 +891,62 @@ class _InboxScreenState extends State<InboxScreen> {
                               icon: const Icon(Icons.download_outlined),
                               label: Text(a.fileName),
                               onPressed: () async {
-                                setState(() { _attachmentStatus = 'Decoding ${a.fileName}...'; });
-                                final data = _decodeBase64MaybeUrl(a.contentBase64);
-                                if (data == null) {
-                                  setState(() { _attachmentStatus = 'Failed to decode ${a.fileName}'; });
-                                  return;
-                                }
-                                final ext = _inferExt(a.fileName, a.contentType);
-                                setState(() { _attachmentStatus = 'Choosing location for ${a.fileName}...'; });
+                                // Show downloading dialog
+                                if (!mounted) return;
+                                showDialog(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (context) => AlertDialog(
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const CircularProgressIndicator(),
+                                        const SizedBox(height: 16),
+                                        Text('Downloading ${a.fileName}...'),
+                                      ],
+                                    ),
+                                  ),
+                                );
+
                                 try {
-                                  final suggestedName = ext.isEmpty ? a.fileName : (a.fileName.endsWith('.$ext') ? a.fileName : '${a.fileName}.$ext');
-                                  final savePath = await FilePicker.platform.saveFile(
-                                    dialogTitle: 'Save attachment',
-                                    fileName: suggestedName,
-                                    type: FileType.any,
-                                  );
-                                  if (savePath == null) {
-                                    setState(() { _attachmentStatus = 'Save cancelled'; });
+                                  final data = _decodeBase64MaybeUrl(a.contentBase64);
+                                  if (data == null) {
+                                    if (mounted) Navigator.pop(context);
+                                    setState(() { _attachmentStatus = 'Failed to decode ${a.fileName}'; });
                                     return;
                                   }
-                                  setState(() { _attachmentStatus = 'Saving to $savePath'; });
-                                  final file = io.File(savePath);
-                                  await file.writeAsBytes(data, flush: true);
-                                  setState(() { _attachmentStatus = 'Saved ${a.fileName} to $savePath'; });
+
+                                  final ext = _inferExt(a.fileName, a.contentType);
+                                  if (ext.isEmpty) {
+                                    await FileSaver.instance.saveFile(
+                                      name: a.fileName,
+                                      bytes: data,
+                                      mimeType: MimeType.other,
+                                    );
+                                  } else {
+                                    await FileSaver.instance.saveFile(
+                                      name: a.fileName,
+                                      bytes: data,
+                                      ext: ext,
+                                      mimeType: MimeType.other,
+                                    );
+                                  }
+
+                                  if (mounted) Navigator.pop(context);
+                                  setState(() { _attachmentStatus = 'Downloaded ${a.fileName}'; });
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Downloaded ${a.fileName}'), backgroundColor: Colors.green)
+                                    );
+                                  }
                                 } catch (e) {
-                                  setState(() { _attachmentStatus = 'Save failed for ${a.fileName}: $e'; });
+                                  if (mounted) Navigator.pop(context);
+                                  setState(() { _attachmentStatus = 'Download failed: $e'; });
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red)
+                                    );
+                                  }
                                 }
                               },
                             );
