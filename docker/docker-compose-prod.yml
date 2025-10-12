@@ -1,10 +1,31 @@
 services:
+  # Caddy Reverse Proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: quantum_caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - quantum_network
+    depends_on:
+      - backend
+      - auth-service
+      - key-manager
+      - otp-server
+      - aes-server
+    restart: unless-stopped
+
   # PostgreSQL Database
   postgres:
-    image: vanishajr/quantum-secure-database:latest
+    build:
+      context: ..
+      dockerfile: ./docker/database/Dockerfile
     container_name: quantum_postgres
-    ports:
-      - "5433:5432"
     environment:
       POSTGRES_DB: quantum_auth
       POSTGRES_USER: postgres
@@ -22,8 +43,12 @@ services:
 
   # Key Manager Service
   key-manager:
-    image: vanishajr/quantum-secure-key-manager:latest
+    build:
+      context: ..
+      dockerfile: ./docker/key-manager/Dockerfile
     container_name: quantum_key_manager
+    ports:
+      - "2020:2020"
     environment:
       - FLASK_ENV=production
     volumes:
@@ -43,8 +68,12 @@ services:
 
   # OTP Encryption Service
   otp-server:
-    image: vanishajr/quantum-secure-otp-server:latest
+    build:
+      context: ..
+      dockerfile: ./docker/otp-server/Dockerfile
     container_name: quantum_otp_server
+    ports:
+      - "2021:2021"
     environment:
       - FLASK_ENV=production
       - KM_URL=http://key-manager:2020
@@ -58,8 +87,12 @@ services:
 
   # AES GCM Encryption Service
   aes-server:
-    image: vanishajr/quantum-secure-aes-server:latest
+    build:
+      context: ..
+      dockerfile: ./docker/aes-server/Dockerfile
     container_name: quantum_aes_server
+    ports:
+      - "2022:2022"
     environment:
       - FLASK_ENV=production
       - KM_URL=http://key-manager:2020
@@ -73,8 +106,12 @@ services:
 
   # Authentication Service
   auth-service:
-    image: vanishajr/quantum-secure-auth-service:latest
+    build:
+      context: ..
+      dockerfile: ./docker/auth/Dockerfile
     container_name: quantum_auth_service
+    ports:
+      - "2023:2023"
     environment:
       - FLASK_ENV=production
       - DB_HOST=postgres
@@ -100,7 +137,9 @@ services:
 
   # .NET Backend API
   backend:
-    image: vanishajr/quantum-secure-backend:latest
+    build:
+      context: ..
+      dockerfile: ./docker/backend/Dockerfile
     container_name: quantum_backend
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
@@ -160,6 +199,10 @@ volumes:
   postgres_data:
     driver: local
   key_store:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
 
 networks:
