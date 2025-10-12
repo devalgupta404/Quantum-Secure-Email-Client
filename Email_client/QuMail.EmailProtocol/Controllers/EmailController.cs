@@ -130,10 +130,39 @@ public class EmailController : ControllerBase
                 });
             }
 
+            // Check if recipient has PQC public key for attachment encryption
+            if (string.IsNullOrWhiteSpace(recipient.PqcPublicKey))
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = "Recipient does not have a PQC public key registered"
+                });
+            }
+
             // Apply OTP encryption to PQC-encrypted data (no AES layer)
             _logger.LogInformation("Applying OTP encryption to PQC data");
             var finalSubject = await EncryptBodyAsync(request.PqcEncryptedSubject);
             var finalBody = await EncryptBodyAsync(request.PqcEncryptedBody);
+
+            // Encrypt attachments with PQC 2-layer (PQC + OTP) for NEW architecture
+            string? attachmentsJson = null;
+            if (request.Attachments != null && request.Attachments.Count > 0)
+            {
+                _logger.LogInformation("Encrypting {Count} attachments with PQC 2-layer (PQC + OTP)", request.Attachments.Count);
+                var encrypted = new List<object>(request.Attachments.Count);
+                foreach (var a in request.Attachments)
+                {
+                    // Step 1: Encrypt with PQC
+                    var bytes = Convert.FromBase64String(a.ContentBase64);
+                    var contentText = Convert.ToBase64String(bytes);
+                    var pqcEnvelope = await EncryptSingleWithPQC2LayerAsync(contentText, recipient.PqcPublicKey);
+
+                    // Step 2: Wrap PQC envelope with OTP (NEW architecture)
+                    var finalEnvelope = await EncryptBodyAsync(pqcEnvelope);
+                    encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope = finalEnvelope });
+                }
+                attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
+            }
 
             // Resolve sender email
             var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
@@ -149,7 +178,7 @@ public class EmailController : ControllerBase
                 Subject = finalSubject,
                 Body = finalBody,
                 EncryptionMethod = "PQC_2_LAYER", // PQC + OTP (Kyber512)
-                Attachments = null, // TODO: Handle attachments
+                Attachments = attachmentsJson,
                 SentAt = DateTime.UtcNow,
                 IsRead = false
             };
@@ -200,6 +229,15 @@ public class EmailController : ControllerBase
                 });
             }
 
+            // Check if recipient has PQC public key for attachment encryption
+            if (string.IsNullOrWhiteSpace(recipient.PqcPublicKey))
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = "Recipient does not have a PQC public key registered"
+                });
+            }
+
             // PHASE 2: Apply AES encryption to PQC-encrypted data
             _logger.LogInformation("Applying AES encryption to PQC data");
             var aesSubject = await EncryptWithAESGCMAsync(request.PqcEncryptedSubject);
@@ -209,6 +247,29 @@ public class EmailController : ControllerBase
             _logger.LogInformation("Applying OTP encryption to AES data");
             var finalSubject = await EncryptBodyAsync(aesSubject);
             var finalBody = await EncryptBodyAsync(aesBody);
+
+            // Encrypt attachments with PQC 3-layer (PQC + AES + OTP) for NEW architecture
+            string? attachmentsJson = null;
+            if (request.Attachments != null && request.Attachments.Count > 0)
+            {
+                _logger.LogInformation("Encrypting {Count} attachments with PQC 3-layer (PQC + AES + OTP)", request.Attachments.Count);
+                var encrypted = new List<object>(request.Attachments.Count);
+                foreach (var a in request.Attachments)
+                {
+                    // Step 1: Encrypt with PQC
+                    var bytes = Convert.FromBase64String(a.ContentBase64);
+                    var contentText = Convert.ToBase64String(bytes);
+                    var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(contentText, recipient.PqcPublicKey);
+
+                    // Step 2: Wrap PQC envelope with AES (NEW architecture)
+                    var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelope);
+
+                    // Step 3: Wrap AES envelope with OTP (NEW architecture)
+                    var finalEnvelope = await EncryptBodyAsync(aesEnvelope);
+                    encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope = finalEnvelope });
+                }
+                attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
+            }
 
             // Resolve sender email
             var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
@@ -224,7 +285,7 @@ public class EmailController : ControllerBase
                 Subject = finalSubject,
                 Body = finalBody,
                 EncryptionMethod = "PQC_3_LAYER", // PQC + AES + OTP
-                Attachments = null, // TODO: Handle attachments
+                Attachments = attachmentsJson,
                 SentAt = DateTime.UtcNow,
                 IsRead = false
             };
@@ -1693,6 +1754,7 @@ public class SendPqcEncryptedRequest
     public string RecipientEmail { get; set; } = string.Empty;
     public string PqcEncryptedSubject { get; set; } = string.Empty;
     public string PqcEncryptedBody { get; set; } = string.Empty;
+    public List<SendAttachment>? Attachments { get; set; }
 }
 
 // Result classes for encryption methods

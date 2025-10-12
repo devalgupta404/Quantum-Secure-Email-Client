@@ -333,8 +333,32 @@ class EmailService {
   }
 
   /// Save sent PQC email to local SQLite database
-  Future<void> saveSentPqcEmail(String emailId, String subject, String body, String recipientEmail, String senderEmail, DateTime sentAt) async {
+  Future<void> saveSentPqcEmail(String emailId, String subject, String body, String recipientEmail, String senderEmail, DateTime sentAt, {List<SendAttachment>? attachments}) async {
     try {
+      print('[EmailService] ===== SAVING PQC EMAIL TO LOCAL DATABASE =====');
+      print('[EmailService] Email ID: $emailId');
+      print('[EmailService] Subject: $subject');
+      print('[EmailService] Body length: ${body.length}');
+      print('[EmailService] Attachments parameter: ${attachments?.length ?? 0} attachments');
+
+      if (attachments != null && attachments.isNotEmpty) {
+        for (int i = 0; i < attachments.length; i++) {
+          print('[EmailService] Input attachment $i: ${attachments[i].fileName}, size: ${attachments[i].contentBase64.length} bytes');
+        }
+      }
+
+      // Convert SendAttachment to PqcAttachment
+      final pqcAttachments = attachments?.map((a) {
+        print('[EmailService] Converting attachment: ${a.fileName}');
+        return PqcAttachment(
+          fileName: a.fileName,
+          contentType: a.contentType,
+          contentBase64: a.contentBase64,
+        );
+      }).toList();
+
+      print('[EmailService] Converted ${pqcAttachments?.length ?? 0} attachments to PqcAttachment');
+
       final email = SentPqcEmail(
         id: emailId,
         subject: subject,
@@ -342,12 +366,15 @@ class EmailService {
         recipientEmail: recipientEmail,
         senderEmail: senderEmail,
         sentAt: sentAt,
+        attachments: pqcAttachments,
       );
 
+      print('[EmailService] Created SentPqcEmail object with ${email.attachments.length} attachments');
       await _dbHelper.insertSentPqcEmail(email);
-      print('[EmailService] Saved PQC email to local database: $emailId');
-    } catch (e) {
-      print('[EmailService] Error saving sent PQC email to database: $e');
+      print('[EmailService] ✅ Successfully saved PQC email to local database: $emailId (with ${pqcAttachments?.length ?? 0} attachments)');
+    } catch (e, stackTrace) {
+      print('[EmailService] ❌ Error saving sent PQC email to database: $e');
+      print('[EmailService] Stack trace: $stackTrace');
     }
   }
 
@@ -390,6 +417,7 @@ class EmailService {
     required String recipientEmail,
     required String subject,
     required String body,
+    List<SendAttachment>? attachments,
   }) async {
     try {
       print('[EmailService] Starting NEW PQC_2_LAYER send flow...');
@@ -421,6 +449,8 @@ class EmailService {
         'recipientEmail': recipientEmail,
         'pqcEncryptedSubject': pqcEncryptedSubject,
         'pqcEncryptedBody': pqcEncryptedBody,
+        if (attachments != null && attachments.isNotEmpty)
+          'attachments': attachments.map((a) => a.toJson()).toList(),
       };
 
       final response = await http.post(
@@ -437,8 +467,8 @@ class EmailService {
           final emailId = data['emailId'] as String;
           print('[EmailService] PQC_2_LAYER email sent successfully, ID: $emailId');
 
-          // Step 4: Save plaintext to local database for sent folder
-          await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now());
+          // Step 4: Save plaintext to local database for sent folder (including attachments)
+          await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now(), attachments: attachments);
 
           return true;
         }
@@ -459,6 +489,7 @@ class EmailService {
     required String recipientEmail,
     required String subject,
     required String body,
+    List<SendAttachment>? attachments,
   }) async {
     try {
       print('[EmailService] Starting NEW PQC_3_LAYER send flow...');
@@ -490,6 +521,8 @@ class EmailService {
         'recipientEmail': recipientEmail,
         'pqcEncryptedSubject': pqcEncryptedSubject,
         'pqcEncryptedBody': pqcEncryptedBody,
+        if (attachments != null && attachments.isNotEmpty)
+          'attachments': attachments.map((a) => a.toJson()).toList(),
       };
 
       final response = await http.post(
@@ -506,8 +539,8 @@ class EmailService {
           final emailId = data['emailId'] as String;
           print('[EmailService] PQC_3_LAYER email sent successfully, ID: $emailId');
 
-          // Step 4: Save plaintext to local database for sent folder
-          await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now());
+          // Step 4: Save plaintext to local database for sent folder (including attachments)
+          await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now(), attachments: attachments);
 
           return true;
         }
@@ -875,10 +908,18 @@ class EmailService {
                 print('[EmailService] ✅ Found in local database!');
                 print('[EmailService] Local subject: ${localEmail.subject}');
                 print('[EmailService] Local body: ${localEmail.body}');
+                print('[EmailService] Local attachments: ${localEmail.attachments.length}');
                 // Replace encrypted data with plaintext from local database
                 email.subject = localEmail.subject;
                 email.body = localEmail.body;
-                print('[EmailService] Loaded ${email.encryptionMethod} email from local database: ${email.id}');
+                // Replace with local attachments
+                email.attachments.clear();
+                email.attachments.addAll(localEmail.attachments.map((a) => EmailAttachment(
+                  fileName: a.fileName,
+                  contentType: a.contentType,
+                  contentBase64: a.contentBase64,
+                )));
+                print('[EmailService] Loaded ${email.encryptionMethod} email from local database: ${email.id} (${localEmail.attachments.length} attachments)');
               } else {
                 print('[EmailService] ❌ NOT FOUND in local database!');
                 print('[EmailService] Warning: ${email.encryptionMethod} email not found in local database: ${email.id}');
@@ -928,7 +969,7 @@ class Email {
   final String recipientEmail;
   String subject;
   String body;
-  final List<EmailAttachment> attachments;
+  List<EmailAttachment> attachments; // Non-final to allow updates from local database
   final DateTime sentAt;
   final bool isRead;
   final String encryptionMethod;
@@ -943,7 +984,7 @@ class Email {
     required this.sentAt,
     required this.isRead,
     this.encryptionMethod = 'OTP',
-  }) : attachments = attachments ?? const <EmailAttachment>[];
+  }) : attachments = attachments ?? <EmailAttachment>[];
 
   factory Email.fromJson(Map<String, dynamic> json) => Email(
     id: json['id'] as String,

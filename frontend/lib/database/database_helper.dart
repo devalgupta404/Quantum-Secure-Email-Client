@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Bumped to 2 to add attachments column
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -46,7 +46,8 @@ class DatabaseHelper {
         body TEXT NOT NULL,
         recipientEmail TEXT NOT NULL,
         senderEmail TEXT NOT NULL,
-        sentAt TEXT NOT NULL
+        sentAt TEXT NOT NULL,
+        attachments TEXT
       )
     ''');
 
@@ -67,26 +68,42 @@ class DatabaseHelper {
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     print('[DatabaseHelper] Upgrading database from version $oldVersion to $newVersion');
 
-    // Future migrations will go here
-    // Example:
-    // if (oldVersion < 2) {
-    //   await db.execute('ALTER TABLE sent_pqc_emails ADD COLUMN newField TEXT');
-    // }
+    // Add attachments column for version 2
+    if (oldVersion < 2) {
+      print('[DatabaseHelper] Adding attachments column to sent_pqc_emails table');
+      await db.execute('ALTER TABLE sent_pqc_emails ADD COLUMN attachments TEXT');
+    }
   }
 
   /// Insert a sent PQC email
   Future<int> insertSentPqcEmail(SentPqcEmail email) async {
     try {
+      print('[DatabaseHelper] ===== INSERTING PQC EMAIL TO DATABASE =====');
+      print('[DatabaseHelper] Email ID: ${email.id}');
+      print('[DatabaseHelper] Subject: ${email.subject}');
+      print('[DatabaseHelper] Attachments: ${email.attachments.length}');
+
+      if (email.attachments.isNotEmpty) {
+        for (int i = 0; i < email.attachments.length; i++) {
+          print('[DatabaseHelper] Attachment $i: ${email.attachments[i].fileName}, size: ${email.attachments[i].contentBase64.length} bytes');
+        }
+      }
+
+      final emailMap = email.toMap();
+      print('[DatabaseHelper] Converted to map, keys: ${emailMap.keys.toList()}');
+      print('[DatabaseHelper] Attachments JSON length: ${emailMap['attachments']?.toString().length ?? 0}');
+
       final db = await database;
       final result = await db.insert(
         'sent_pqc_emails',
-        email.toMap(),
+        emailMap,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      print('[DatabaseHelper] Inserted sent PQC email: ${email.id}');
+      print('[DatabaseHelper] ✅ Inserted sent PQC email: ${email.id}, result: $result');
       return result;
-    } catch (e) {
-      print('[DatabaseHelper] Error inserting sent PQC email: $e');
+    } catch (e, stackTrace) {
+      print('[DatabaseHelper] ❌ Error inserting sent PQC email: $e');
+      print('[DatabaseHelper] Stack trace: $stackTrace');
       rethrow;
     }
   }
@@ -102,7 +119,7 @@ class DatabaseHelper {
       final allEmails = await db.query('sent_pqc_emails');
       print('[DatabaseHelper] Total emails in database: ${allEmails.length}');
       for (int i = 0; i < allEmails.length; i++) {
-        print('[DatabaseHelper] Email $i: ID=${allEmails[i]['id']}, Subject=${allEmails[i]['subject']}, Body=${allEmails[i]['body']}');
+        print('[DatabaseHelper] Email $i: ID=${allEmails[i]['id']}, Subject=${allEmails[i]['subject']}, Attachments JSON: ${allEmails[i]['attachments']}');
       }
 
       final List<Map<String, dynamic>> maps = await db.query(
@@ -121,9 +138,19 @@ class DatabaseHelper {
       print('[DatabaseHelper] ✅ Found email in database!');
       print('[DatabaseHelper] Subject: ${maps.first['subject']}');
       print('[DatabaseHelper] Body: ${maps.first['body']}');
-      return SentPqcEmail.fromMap(maps.first);
-    } catch (e) {
+      print('[DatabaseHelper] Attachments raw: ${maps.first['attachments']}');
+
+      final email = SentPqcEmail.fromMap(maps.first);
+      print('[DatabaseHelper] Parsed email with ${email.attachments.length} attachments');
+      if (email.attachments.isNotEmpty) {
+        for (int i = 0; i < email.attachments.length; i++) {
+          print('[DatabaseHelper] Loaded attachment $i: ${email.attachments[i].fileName}');
+        }
+      }
+      return email;
+    } catch (e, stackTrace) {
       print('[DatabaseHelper] ❌ Error getting sent PQC email: $e');
+      print('[DatabaseHelper] Stack trace: $stackTrace');
       return null;
     }
   }

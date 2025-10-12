@@ -134,21 +134,39 @@ class _ComposeScreenState extends State<ComposeScreen> {
       // Use NEW PQC architecture for both PQC_2_LAYER and PQC_3_LAYER (auto-fetches public key)
       bool success = false;
       if (_selectedEncryptionMethod == 'PQC_2_LAYER') {
+        print('[compose] ===== PQC_2_LAYER SEND STARTING =====');
         print('[compose] Using NEW PQC_2_LAYER architecture (frontend PQC + backend OTP)');
+        print('[compose] Attachments count: ${_attachments.length}');
+        if (_attachments.isNotEmpty) {
+          for (int i = 0; i < _attachments.length; i++) {
+            print('[compose] Attachment $i: ${_attachments[i].fileName}, size: ${_attachments[i].contentBase64.length} bytes');
+          }
+        }
         success = await _emailService.sendPqc2EncryptedEmail(
           senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
           recipientEmail: _toController.text.trim(),
           subject: _subjectController.text.trim(),
           body: _bodyController.text.trim(),
+          attachments: _attachments.isNotEmpty ? _attachments : null,
         );
+        print('[compose] PQC_2_LAYER send result: $success');
       } else if (_selectedEncryptionMethod == 'PQC_3_LAYER') {
+        print('[compose] ===== PQC_3_LAYER SEND STARTING =====');
         print('[compose] Using NEW PQC_3_LAYER architecture (frontend PQC + backend AES + OTP)');
+        print('[compose] Attachments count: ${_attachments.length}');
+        if (_attachments.isNotEmpty) {
+          for (int i = 0; i < _attachments.length; i++) {
+            print('[compose] Attachment $i: ${_attachments[i].fileName}, size: ${_attachments[i].contentBase64.length} bytes');
+          }
+        }
         success = await _emailService.sendPqc3EncryptedEmail(
           senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
           recipientEmail: _toController.text.trim(),
           subject: _subjectController.text.trim(),
           body: _bodyController.text.trim(),
+          attachments: _attachments.isNotEmpty ? _attachments : null,
         );
+        print('[compose] PQC_3_LAYER send result: $success');
       } else {
         // Old flow for OTP and AES only (no PQC)
         print('[compose] Using OLD flow for $_selectedEncryptionMethod');
