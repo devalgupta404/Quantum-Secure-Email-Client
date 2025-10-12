@@ -433,8 +433,14 @@ class EmailService {
       print('[EmailService] Recipient validated, public key: ${recipientPublicKey.substring(0, 50)}...');
 
       // Step 2: Encrypt subject and body with PQC on frontend
-      final pqcEncryptedSubject = await encryptWithPqcFrontend(subject, recipientPublicKey);
-      final pqcEncryptedBody = await encryptWithPqcFrontend(body, recipientPublicKey);
+      // Use placeholder for empty subject/body to avoid backend validation errors
+      final subjectToEncrypt = subject.trim().isEmpty ? "(No Subject)" : subject;
+      final bodyToEncrypt = body.trim().isEmpty ? " " : body;
+      print('[EmailService] Subject to encrypt: "$subjectToEncrypt"');
+      print('[EmailService] Body to encrypt: "${bodyToEncrypt.substring(0, bodyToEncrypt.length > 50 ? 50 : bodyToEncrypt.length)}..."');
+
+      final pqcEncryptedSubject = await encryptWithPqcFrontend(subjectToEncrypt, recipientPublicKey);
+      final pqcEncryptedBody = await encryptWithPqcFrontend(bodyToEncrypt, recipientPublicKey);
 
       if (pqcEncryptedSubject == null || pqcEncryptedBody == null) {
         print('[EmailService] PQC encryption failed');
@@ -734,6 +740,40 @@ class EmailService {
             return null;
           }
 
+          // Decrypt attachments (if present)
+          final List<EmailAttachment> decryptedAttachments = [];
+          final pqcAttachmentsJson = emailData['pqcAttachmentsJson'] as String?;
+          if (pqcAttachmentsJson != null && pqcAttachmentsJson.isNotEmpty) {
+            try {
+              print('[EmailService] Found pqcAttachmentsJson, decrypting attachments...');
+              final attachmentsList = jsonDecode(pqcAttachmentsJson) as List;
+              print('[EmailService] Found ${attachmentsList.length} encrypted attachments');
+
+              for (int i = 0; i < attachmentsList.length; i++) {
+                final attachmentData = attachmentsList[i] as Map<String, dynamic>;
+                final fileName = attachmentData['fileName'] as String;
+                final contentType = attachmentData['contentType'] as String? ?? 'application/octet-stream';
+                final pqcEnvelope = attachmentData['pqcEnvelope'] as String;
+
+                print('[EmailService] Decrypting attachment $i: $fileName');
+                final decryptedBase64 = await decryptWithPqcFrontend(pqcEnvelope);
+
+                if (decryptedBase64 != null) {
+                  decryptedAttachments.add(EmailAttachment(
+                    fileName: fileName,
+                    contentType: contentType,
+                    contentBase64: decryptedBase64,
+                  ));
+                  print('[EmailService] ✅ Successfully decrypted attachment: $fileName');
+                } else {
+                  print('[EmailService] ❌ Failed to decrypt attachment: $fileName');
+                }
+              }
+            } catch (e) {
+              print('[EmailService] Error decrypting attachments: $e');
+            }
+          }
+
           // Create Email object with decrypted data
           return Email(
             id: emailData['id'] as String,
@@ -741,6 +781,7 @@ class EmailService {
             recipientEmail: emailData['recipientEmail'] as String,
             subject: decryptedSubject,
             body: decryptedBody,
+            attachments: decryptedAttachments,
             sentAt: DateTime.parse(emailData['sentAt'] as String),
             isRead: emailData['isRead'] as bool,
             encryptionMethod: emailData['encryptionMethod'] as String,
@@ -784,6 +825,40 @@ class EmailService {
             return null;
           }
 
+          // Decrypt attachments (if present)
+          final List<EmailAttachment> decryptedAttachments = [];
+          final pqcAttachmentsJson = emailData['pqcAttachmentsJson'] as String?;
+          if (pqcAttachmentsJson != null && pqcAttachmentsJson.isNotEmpty) {
+            try {
+              print('[EmailService] Found pqcAttachmentsJson, decrypting attachments...');
+              final attachmentsList = jsonDecode(pqcAttachmentsJson) as List;
+              print('[EmailService] Found ${attachmentsList.length} encrypted attachments');
+
+              for (int i = 0; i < attachmentsList.length; i++) {
+                final attachmentData = attachmentsList[i] as Map<String, dynamic>;
+                final fileName = attachmentData['fileName'] as String;
+                final contentType = attachmentData['contentType'] as String? ?? 'application/octet-stream';
+                final pqcEnvelope = attachmentData['pqcEnvelope'] as String;
+
+                print('[EmailService] Decrypting attachment $i: $fileName');
+                final decryptedBase64 = await decryptWithPqcFrontend(pqcEnvelope);
+
+                if (decryptedBase64 != null) {
+                  decryptedAttachments.add(EmailAttachment(
+                    fileName: fileName,
+                    contentType: contentType,
+                    contentBase64: decryptedBase64,
+                  ));
+                  print('[EmailService] ✅ Successfully decrypted attachment: $fileName');
+                } else {
+                  print('[EmailService] ❌ Failed to decrypt attachment: $fileName');
+                }
+              }
+            } catch (e) {
+              print('[EmailService] Error decrypting attachments: $e');
+            }
+          }
+
           // Create Email object with decrypted data
           return Email(
             id: emailData['id'] as String,
@@ -791,6 +866,7 @@ class EmailService {
             recipientEmail: emailData['recipientEmail'] as String,
             subject: decryptedSubject,
             body: decryptedBody,
+            attachments: decryptedAttachments,
             sentAt: DateTime.parse(emailData['sentAt'] as String),
             isRead: emailData['isRead'] as bool,
             encryptionMethod: emailData['encryptionMethod'] as String,

@@ -16,7 +16,7 @@ RUN mkdir -p /etc/postgresql
 RUN chown -R postgres:postgres /etc/postgresql
 
 # Expose port
-EXPOSE 5437
+EXPOSE 5432
 
 # Add health check
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \

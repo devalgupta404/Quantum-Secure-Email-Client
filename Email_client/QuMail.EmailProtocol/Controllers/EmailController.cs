@@ -657,6 +657,42 @@ public class EmailController : ControllerBase
                 pqcBody = email.Body;
             }
 
+            // Decrypt attachments from OTP layer to PQC layer
+            _logger.LogInformation("Decrypting attachments for PQC_2_LAYER email");
+            string? pqcAttachmentsJson = null;
+            if (!string.IsNullOrWhiteSpace(email.Attachments))
+            {
+                try
+                {
+                    var attachmentsList = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(email.Attachments, _jsonOptions);
+                    if (attachmentsList != null && attachmentsList.Count > 0)
+                    {
+                        var decryptedAttachments = new List<object>();
+                        foreach (var item in attachmentsList)
+                        {
+                            var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() : null;
+                            var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() : null;
+                            var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
+
+                            if (!string.IsNullOrWhiteSpace(fileName) && !string.IsNullOrWhiteSpace(envelope))
+                            {
+                                // Decrypt OTP layer to get PQC envelope
+                                if (TryParseEnvelope(envelope, out var otpEnvelope))
+                                {
+                                    var pqcEnvelope = await DecryptOTPAsync(otpEnvelope);
+                                    decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
+                                }
+                            }
+                        }
+                        pqcAttachmentsJson = JsonSerializer.Serialize(decryptedAttachments, _jsonOptions);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to decrypt attachments for PQC_2_LAYER email");
+                }
+            }
+
             // Return PQC-encrypted data to frontend
             _logger.LogInformation("Returning PQC-encrypted data to frontend for client-side decryption");
 
@@ -668,6 +704,7 @@ public class EmailController : ControllerBase
                     recipientEmail = email.RecipientEmail,
                     pqcEncryptedSubject = pqcSubject,  // PQC-encrypted, to be decrypted on frontend
                     pqcEncryptedBody = pqcBody,        // PQC-encrypted, to be decrypted on frontend
+                    pqcAttachmentsJson = pqcAttachmentsJson,  // PQC-encrypted attachments for frontend decryption
                     sentAt = email.SentAt,
                     isRead = email.IsRead,
                     encryptionMethod = email.EncryptionMethod,
@@ -765,7 +802,49 @@ public class EmailController : ControllerBase
                 pqcBody = aesBody;
             }
 
-            // PHASE 3: Return PQC-encrypted data to frontend
+            // PHASE 3: Decrypt attachments from OTP+AES layers to PQC layer
+            _logger.LogInformation("Decrypting attachments for PQC_3_LAYER email");
+            string? pqcAttachmentsJson = null;
+            if (!string.IsNullOrWhiteSpace(email.Attachments))
+            {
+                try
+                {
+                    var attachmentsList = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(email.Attachments, _jsonOptions);
+                    if (attachmentsList != null && attachmentsList.Count > 0)
+                    {
+                        var decryptedAttachments = new List<object>();
+                        foreach (var item in attachmentsList)
+                        {
+                            var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() : null;
+                            var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() : null;
+                            var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
+
+                            if (!string.IsNullOrWhiteSpace(fileName) && !string.IsNullOrWhiteSpace(envelope))
+                            {
+                                // Decrypt OTP layer first
+                                if (TryParseEnvelope(envelope, out var otpEnvelope))
+                                {
+                                    var aesEnvelope = await DecryptOTPAsync(otpEnvelope);
+
+                                    // Then decrypt AES layer to get PQC envelope
+                                    if (TryParseAESEnvelope(aesEnvelope, out var aesEnvelopeObj))
+                                    {
+                                        var pqcEnvelope = await DecryptAESAsync(aesEnvelopeObj);
+                                        decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
+                                    }
+                                }
+                            }
+                        }
+                        pqcAttachmentsJson = JsonSerializer.Serialize(decryptedAttachments, _jsonOptions);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to decrypt attachments for PQC_3_LAYER email");
+                }
+            }
+
+            // PHASE 4: Return PQC-encrypted data to frontend
             _logger.LogInformation("Returning PQC-encrypted data to frontend for client-side decryption");
 
             return Ok(new {
@@ -776,6 +855,7 @@ public class EmailController : ControllerBase
                     recipientEmail = email.RecipientEmail,
                     pqcEncryptedSubject = pqcSubject,  // PQC-encrypted, to be decrypted on frontend
                     pqcEncryptedBody = pqcBody,        // PQC-encrypted, to be decrypted on frontend
+                    pqcAttachmentsJson = pqcAttachmentsJson,  // PQC-encrypted attachments for frontend decryption
                     sentAt = email.SentAt,
                     isRead = email.IsRead,
                     encryptionMethod = email.EncryptionMethod,
@@ -1674,12 +1754,13 @@ public class EmailController : ControllerBase
             {
                 encryptedBody = encrypted.EncryptedBody,
                 pqcCiphertext = encrypted.PQCCiphertext,
+                encryptedKeyId = encrypted.EncryptedKeyId, // REQUIRED for proper decryption
                 algorithm = encrypted.Algorithm,
                 keyId = encrypted.KeyId,
                 securityLevel = "Kyber512",
                 useAES = false
             };
-            
+
             return JsonSerializer.Serialize(envelope, _jsonOptions);
         }
         catch (Exception ex)
@@ -1705,12 +1786,13 @@ public class EmailController : ControllerBase
             {
                 encryptedBody = encrypted.EncryptedBody,
                 pqcCiphertext = encrypted.PQCCiphertext,
+                encryptedKeyId = encrypted.EncryptedKeyId, // REQUIRED for proper decryption
                 algorithm = encrypted.Algorithm,
                 keyId = encrypted.KeyId,
                 securityLevel = encrypted.SecurityLevel,
                 useAES = encrypted.UseAES
             };
-            
+
             return JsonSerializer.Serialize(envelope, _jsonOptions);
         }
         catch (Exception ex)

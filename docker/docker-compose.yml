@@ -86,7 +86,7 @@ services:
     environment:
       - FLASK_ENV=production
       - DB_HOST=postgres
-      - DB_PORT=5437
+      - DB_PORT=5432
       - DB_NAME=quantum_auth
       - DB_USERNAME=postgres
       - DB_PASSWORD=${DB_PASSWORD:-quantum_secure_password_2024}
@@ -116,7 +116,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5001
       - DB_HOST=postgres
-      - DB_PORT=5437
+      - DB_PORT=5432
       - DB_NAME=quantum_auth
       - DB_USERNAME=postgres
       - DB_PASSWORD=${DB_PASSWORD:-quantum_secure_password_2024}
