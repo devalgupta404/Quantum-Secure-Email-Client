@@ -131,10 +131,12 @@ def decrypt_gcm():
     except Exception as e:
         return jsonify({"error": "key_lookup_failed", "detail": str(e)}), 404
 
-    args = [AES_BIN, key_hex, iv_hex, "--dec", ct_hex, tag_hex]
+    # Use --dec-stdin mode to avoid "Argument list too long" error for large attachments
+    args = [AES_BIN, key_hex, iv_hex, "--dec-stdin", tag_hex]
     if aad_hex: args += ["--aad", aad_hex]
 
-    proc = subprocess.run(args, capture_output=True)
+    # Pass ciphertext hex via stdin instead of command-line argument
+    proc = subprocess.run(args, input=ct_hex.encode('utf-8'), capture_output=True)
     if proc.returncode != 0:
         return jsonify({"error": "auth_failed"}), 400
 

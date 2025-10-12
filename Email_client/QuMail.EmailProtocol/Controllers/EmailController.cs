@@ -1198,10 +1198,18 @@ public class EmailController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("=== AES DECRYPT START ===");
             _logger.LogInformation("Calling AES decrypt API with key_id: {KeyId}", envelope.KeyId);
-            _logger.LogInformation("AES envelope details - KeyId: {KeyId}, IvHex: {IvHex}, CiphertextHex: {CiphertextHex}, TagHex: {TagHex}, AadHex: {AadHex}", 
-                envelope.KeyId, envelope.IvHex, envelope.CiphertextHex, envelope.TagHex, envelope.AadHex);
-            
+            _logger.LogInformation("AES envelope - KeyId: {KeyId}", envelope.KeyId);
+            _logger.LogInformation("AES envelope - IvHex length: {IvLen}", envelope.IvHex?.Length ?? 0);
+            _logger.LogInformation("AES envelope - CiphertextHex length: {CtLen}", envelope.CiphertextHex?.Length ?? 0);
+            _logger.LogInformation("AES envelope - TagHex length: {TagLen}", envelope.TagHex?.Length ?? 0);
+            _logger.LogInformation("AES envelope - AadHex length: {AadLen}", envelope.AadHex?.Length ?? 0);
+
+            // Log first 100 chars of ciphertext for debugging
+            var ctPreview = envelope.CiphertextHex?.Length > 100 ? envelope.CiphertextHex.Substring(0, 100) + "..." : envelope.CiphertextHex;
+            _logger.LogInformation("AES envelope - CiphertextHex preview: {CtPreview}", ctPreview);
+
             var req = new
             {
                 key_id = envelope.KeyId,
@@ -1210,11 +1218,14 @@ public class EmailController : ControllerBase
                 tag_hex = envelope.TagHex,
                 aad_hex = envelope.AadHex
             };
-            
+
             _logger.LogInformation("Sending AES decrypt request to: {AesUrl}/api/gcm/decrypt", AesBaseUrl);
+            _logger.LogInformation("Request payload size: ~{Size} bytes", JsonSerializer.Serialize(req).Length);
+
             using var response = await _http.PostAsJsonAsync($"{AesBaseUrl}/api/gcm/decrypt", req);
-            
+
             _logger.LogInformation("AES decrypt API response status: {StatusCode}", response.StatusCode);
+            _logger.LogInformation("AES decrypt API response headers: {Headers}", string.Join(", ", response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")));
             
             if (response.IsSuccessStatusCode)
             {
@@ -1241,17 +1252,23 @@ public class EmailController : ControllerBase
                 }
                 
                 // If not JSON or no plaintext property, return the raw content
-                _logger.LogInformation("AES decryption successful, returning raw content: {Content}", responseContent);
+                _logger.LogInformation("AES decryption successful, returning raw content length: {Length}", responseContent?.Length ?? 0);
+                _logger.LogInformation("=== AES DECRYPT END (SUCCESS) ===");
                 return responseContent;
             }
-            
+
             var errorContent = await response.Content.ReadAsStringAsync();
-            _logger.LogError("AES decrypt API returned status: {StatusCode}, content: {ErrorContent}", response.StatusCode, errorContent);
+            _logger.LogError("AES decrypt API returned ERROR status: {StatusCode}", response.StatusCode);
+            _logger.LogError("AES decrypt error content length: {Length}", errorContent?.Length ?? 0);
+            _logger.LogError("AES decrypt error content preview: {Preview}", errorContent?.Length > 500 ? errorContent.Substring(0, 500) + "..." : errorContent);
+            _logger.LogInformation("=== AES DECRYPT END (FAILED) ===");
             return $"AES decryption failed: {response.StatusCode} - {errorContent}";
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AES decryption failed with exception");
+            _logger.LogError(ex, "AES decryption failed with exception: {Message}", ex.Message);
+            _logger.LogError("Exception stack trace: {StackTrace}", ex.StackTrace);
+            _logger.LogInformation("=== AES DECRYPT END (EXCEPTION) ===");
             return $"AES decryption failed: {ex.Message}";
         }
     }

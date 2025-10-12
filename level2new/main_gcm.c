@@ -50,8 +50,9 @@ int main(int argc, char **argv) {
         fprintf(stderr,
             "Usage:\n"
             "  Encrypt: %s <hex-16B-key> <hex-iv> [--aad HEX] < plaintext\n"
-            "  Decrypt: %s <hex-16B-key> <hex-iv> --dec <HEXCT> <HEXTAG> [--aad HEX]\n",
-            argv[0], argv[0]);
+            "  Decrypt: %s <hex-16B-key> <hex-iv> --dec <HEXCT> <HEXTAG> [--aad HEX]\n"
+            "  Decrypt (stdin): %s <hex-16B-key> <hex-iv> --dec-stdin <HEXTAG> [--aad HEX] < ciphertext_hex\n",
+            argv[0], argv[0], argv[0]);
         return 1;
     }
 
@@ -64,11 +65,13 @@ int main(int argc, char **argv) {
     /* parse optional flags */
     const char *aad_hex = NULL;
     int decrypt_mode = 0;
+    int decrypt_stdin_mode = 0;
     const char *ct_hex = NULL, *tag_hex = NULL;
 
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--aad") == 0 && i+1 < argc) { aad_hex = argv[++i]; }
         else if (strcmp(argv[i], "--dec") == 0 && i+2 < argc) { decrypt_mode = 1; ct_hex = argv[++i]; tag_hex = argv[++i]; }
+        else if (strcmp(argv[i], "--dec-stdin") == 0 && i+1 < argc) { decrypt_stdin_mode = 1; tag_hex = argv[++i]; }
     }
 
     uint8_t *aad = NULL; size_t aad_len = 0;
@@ -77,7 +80,7 @@ int main(int argc, char **argv) {
     }
 
     int rc = 0;
-    if (!decrypt_mode) {
+    if (!decrypt_mode && !decrypt_stdin_mode) {
         uint8_t *pt=NULL; size_t pt_len=0;
         if (read_all_stdin(&pt, &pt_len) != 0) { fprintf(stderr,"Failed to read PT\n"); return 1; }
 
@@ -88,6 +91,27 @@ int main(int argc, char **argv) {
         printf("CIPHERTEXT_HEX:\n"); bin2hex_line(ct, ct_len);
         printf("TAG_HEX:\n");        bin2hex_line(tag, 16);
 
+        free(pt); free(ct);
+    } else if (decrypt_stdin_mode) {
+        // Read ciphertext hex from stdin
+        uint8_t *ct_hex_buf=NULL; size_t ct_hex_len=0;
+        if (read_all_stdin(&ct_hex_buf, &ct_hex_len) != 0) { fprintf(stderr,"Failed to read CT from stdin\n"); return 1; }
+        // Trim whitespace/newlines
+        while (ct_hex_len > 0 && isspace(ct_hex_buf[ct_hex_len-1])) ct_hex_len--;
+        ct_hex_buf[ct_hex_len] = '\0';
+
+        uint8_t *ct=NULL; size_t ct_len=0;
+        if (hex2bin_dyn((char*)ct_hex_buf, &ct, &ct_len) != 0) { fprintf(stderr,"Bad CT from stdin\n"); free(ct_hex_buf); return 1; }
+        free(ct_hex_buf);
+
+        uint8_t tag[16];
+        if (hex2bin_fixed(tag_hex, tag, 16) != 0) { fprintf(stderr,"Bad TAG\n"); free(ct); return 1; }
+
+        uint8_t *pt=NULL; size_t pt_len=0;
+        rc = aes128_gcm_decrypt(ct, ct_len, aad, aad_len, key, iv, iv_len, tag, &pt, &pt_len);
+        if (rc != 0) { fprintf(stderr,"Auth failed (bad tag)\n"); free(ct); return 2; }
+
+        fwrite(pt, 1, pt_len, stdout);
         free(pt); free(ct);
     } else {
         uint8_t *ct=NULL; size_t ct_len=0;
