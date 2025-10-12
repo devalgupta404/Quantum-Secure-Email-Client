@@ -288,11 +288,28 @@ class _InboxScreenState extends State<InboxScreen> {
 
   String _extractPlaintext(String content) {
     try {
-      // Check if it's a JSON response with plaintext
-      if (content.startsWith('{') && content.contains('"plaintext"')) {
-        final json = jsonDecode(content) as Map<String, dynamic>;
-        return json['plaintext'] ?? content;
+      // If content doesn't look like JSON, return as-is
+      if (!content.trim().startsWith('{')) {
+        return content;
       }
+
+      // Try to parse as JSON
+      final json = jsonDecode(content) as Map<String, dynamic>;
+
+      // Check for various plaintext keys
+      if (json.containsKey('plaintext')) {
+        return json['plaintext'] as String;
+      }
+
+      // If it's an encryption envelope (encrypted data), show a user-friendly message
+      if (json.containsKey('encryptedBody') ||
+          json.containsKey('pqcCiphertext') ||
+          json.containsKey('ciphertext_b64url') ||
+          json.containsKey('ciphertextHex')) {
+        return '[Encrypted message - decryption in progress]';
+      }
+
+      // Otherwise return original content
       return content;
     } catch (e) {
       // If JSON parsing fails, return original content

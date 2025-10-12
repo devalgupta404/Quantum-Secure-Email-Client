@@ -131,44 +131,37 @@ class _ComposeScreenState extends State<ComposeScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // For PQC encryption, require explicit recipient public key (no fallback)
-      if (_selectedEncryptionMethod.startsWith('PQC')) {
-        // If recipient key missing, try to auto-fetch from backend
-        if (_recipientPublicKeyController.text.trim().isEmpty) {
-          final recipientEmail = _toController.text.trim();
-          if (recipientEmail.isNotEmpty) {
-            try {
-              final resp = await http.get(Uri.parse('http://localhost:5001/api/email/pqc/public-key/${Uri.encodeComponent(recipientEmail)}'));
-              if (resp.statusCode == 200) {
-                final data = jsonDecode(resp.body) as Map<String, dynamic>;
-                final pk = (data['data'] as Map<String, dynamic>)['publicKey'] as String;
-                setState(() { _recipientPublicKeyController.text = pk; });
-              }
-            } catch (_) {}
-          }
-          if (_recipientPublicKeyController.text.trim().isEmpty) {
-            _showMessage('Recipient has no PQC key registered. Ask them to share their key.', isError: true);
-            return;
-          }
-        }
-      }
+      // Use NEW PQC architecture for both PQC_2_LAYER and PQC_3_LAYER (auto-fetches public key)
+      bool success = false;
+      if (_selectedEncryptionMethod == 'PQC_2_LAYER') {
+        print('[compose] Using NEW PQC_2_LAYER architecture (frontend PQC + backend OTP)');
+        success = await _emailService.sendPqc2EncryptedEmail(
+          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+          recipientEmail: _toController.text.trim(),
+          subject: _subjectController.text.trim(),
+          body: _bodyController.text.trim(),
+        );
+      } else if (_selectedEncryptionMethod == 'PQC_3_LAYER') {
+        print('[compose] Using NEW PQC_3_LAYER architecture (frontend PQC + backend AES + OTP)');
+        success = await _emailService.sendPqc3EncryptedEmail(
+          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+          recipientEmail: _toController.text.trim(),
+          subject: _subjectController.text.trim(),
+          body: _bodyController.text.trim(),
+        );
+      } else {
+        // Old flow for OTP and AES only (no PQC)
+        print('[compose] Using OLD flow for $_selectedEncryptionMethod');
 
-      // Log PQC keys being used for encryption
-      if (_selectedEncryptionMethod.startsWith('PQC')) {
-        print('[compose] Sending PQC email with method: $_selectedEncryptionMethod');
-        print('[compose] Using recipient public key: ${_recipientPublicKeyController.text.trim().substring(0, 50)}...');
-        print('[compose] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
+        success = await _emailService.sendEmail(
+          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+          recipientEmail: _toController.text.trim(),
+          subject: _subjectController.text.trim(),
+          body: _bodyController.text.trim(),
+          attachments: _attachments,
+          encryptionMethod: _selectedEncryptionMethod,
+        );
       }
-
-      final success = await _emailService.sendEmail(
-        senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
-        recipientEmail: _toController.text.trim(),
-        subject: _subjectController.text.trim(),
-        body: _bodyController.text.trim(),
-        attachments: _attachments,
-        encryptionMethod: _selectedEncryptionMethod,
-        recipientPublicKey: _selectedEncryptionMethod.startsWith('PQC') ? _recipientPublicKeyController.text.trim() : null,
-      );
 
       if (success) {
         _showMessage('📧 Email sent successfully!', isError: false);
@@ -293,65 +286,24 @@ class _ComposeScreenState extends State<ComposeScreen> {
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: Colors.orange.shade50,
-                                border: Border.all(color: Colors.orange.shade200),
+                                color: Colors.green.shade50,
+                                border: Border.all(color: Colors.green.shade200),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Row(
+                              child: Row(
                                 children: [
-                                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                                  SizedBox(width: 8),
+                                  Icon(Icons.info_outline, color: Colors.green, size: 20),
+                                  const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'PQC encryption requires the server to be running. If key generation fails, use OTP or AES encryption instead.',
-                                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                                      _selectedEncryptionMethod == 'PQC_3_LAYER'
+                                          ? 'NEW PQC Architecture: Frontend encrypts with Kyber-1024 first, then backend adds AES+OTP layers. Recipient\'s public key is fetched automatically.'
+                                          : 'NEW PQC Architecture: Frontend encrypts with Kyber-512 first, then backend adds OTP layer. Recipient\'s public key is fetched automatically.',
+                                      style: TextStyle(fontSize: 12, color: Colors.green.shade800),
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextFormField(
-                                    controller: _recipientPublicKeyController,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Recipient Public Key',
-                                      prefixIcon: Icon(Icons.key),
-                                      hintText: 'Auto-generated PQC public key',
-                                    ),
-                                    maxLines: 3,
-                                    readOnly: true,
-                                    validator: (value) {
-                                      if (_selectedEncryptionMethod.startsWith('PQC') && (value == null || value.trim().isEmpty)) {
-                                        return 'Public key is required for PQC encryption';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  onPressed: _generatePublicKey,
-                                  icon: const Icon(Icons.refresh),
-                                  tooltip: 'Generate New Key',
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  onPressed: () async {
-                                    final ok = await EmailService.initializePqcKeys();
-                                    if (ok && EmailService.pqcPublicKey != null) {
-                                      await Clipboard.setData(ClipboardData(text: EmailService.pqcPublicKey!));
-                                      _showMessage('Your PQC public key copied to clipboard', isError: false);
-                                    } else {
-                                      _showMessage('Failed to generate your PQC key', isError: true);
-                                    }
-                                  },
-                                  icon: const Icon(Icons.copy),
-                                  tooltip: 'Copy My Public Key',
-                                ),
-                              ],
                             ),
                           ],
                         ],

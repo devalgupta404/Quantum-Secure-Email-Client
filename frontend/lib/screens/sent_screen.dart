@@ -35,15 +35,28 @@ class _SentScreenState extends State<SentScreen> {
     setState(() => _isLoading = true);
 
     try {
+      print('[sent_screen] ===== LOADING SENT EMAILS =====');
       final emails = await _emailService.getSentEmails(authProvider.user!.email);
+      print('[sent_screen] Received ${emails.length} emails from service');
+
+      // Note: NEW PQC architecture (PQC_2_LAYER and PQC_3_LAYER) sent emails
+      // are already plaintext from local SQLite database - no decryption needed
 
       // Decrypt AES messages (by method or by envelope shape)
-      for (var email in emails) {
-        // Auto-generate PQC keys if needed for PQC emails
-        if ((email.encryptionMethod == 'PQC_2_LAYER' || email.encryptionMethod == 'PQC_3_LAYER') &&
-            EmailService.pqcPrivateKey == null) {
-          await EmailService.initializePqcKeys();
+      for (int i = 0; i < emails.length; i++) {
+        var email = emails[i];
+        print('[sent_screen] ----- Email $i -----');
+        print('[sent_screen] ID: ${email.id}');
+        print('[sent_screen] Encryption: ${email.encryptionMethod}');
+        print('[sent_screen] Subject: ${email.subject.substring(0, email.subject.length > 80 ? 80 : email.subject.length)}');
+        print('[sent_screen] Body: ${email.body.substring(0, email.body.length > 80 ? 80 : email.body.length)}');
+
+        // Skip decryption for NEW PQC emails - they're already plaintext from local storage
+        if (email.encryptionMethod == 'PQC_2_LAYER' || email.encryptionMethod == 'PQC_3_LAYER') {
+          print('[sent_screen] ✅ Skipping decryption for ${email.encryptionMethod} - already plaintext from local storage');
+          continue;
         }
+
         final looksLikeAes = () {
           try {
             final je = jsonDecode(email.body);
@@ -84,182 +97,6 @@ class _SentScreenState extends State<SentScreen> {
             // leave encrypted text if decrypt fails
           }
         }
-
-        // PQC 2-layer decrypt
-        if (email.encryptionMethod == 'PQC_2_LAYER') {
-          try {
-            print('[sent][PQC_2_LAYER] Attempting decryption for email ${email.id}');
-            print('[sent][PQC_2_LAYER] Subject length: ${email.subject.length}, Body length: ${email.body.length}');
-            
-            Map<String, dynamic> subEnv;
-            Map<String, dynamic> bodyEnv;
-            
-            try {
-              subEnv = jsonDecode(email.subject) as Map<String, dynamic>;
-            } catch (e) {
-              print('[sent][PQC_2_LAYER] Failed to parse subject JSON: $e');
-              print('[sent][PQC_2_LAYER] Subject content: ${email.subject.substring(0, math.min(100, email.subject.length))}...');
-              continue;
-            }
-            
-            try {
-              bodyEnv = jsonDecode(email.body) as Map<String, dynamic>;
-            } catch (e) {
-              print('[sent][PQC_2_LAYER] Failed to parse body JSON: $e');
-              print('[sent][PQC_2_LAYER] Body content: ${email.body.substring(0, math.min(100, email.body.length))}...');
-              continue;
-            }
-            
-            // Check if this is pure PQC or hybrid PQC+OTP
-            if (subEnv.containsKey('encryptedBody') && subEnv.containsKey('pqcCiphertext')) {
-              // Pure PQC decryption
-              final priv = EmailService.pqcPrivateKey;
-              if (priv != null && priv.isNotEmpty) {
-                final subResp = await http.post(
-                  Uri.parse('http://localhost:5001/api/pqc/decrypt'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode({
-                    'encryptedBody': subEnv['encryptedBody'],
-                    'pqcCiphertext': subEnv['pqcCiphertext'],
-                    'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
-                    'privateKey': priv,
-                  }),
-                );
-                final bodyResp = await http.post(
-                  Uri.parse('http://localhost:5001/api/pqc/decrypt'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode({
-                    'encryptedBody': bodyEnv['encryptedBody'],
-                    'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                    'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
-                    'privateKey': priv,
-                  }),
-                );
-
-                if (subResp.statusCode == 200) {
-                  email.subject = (jsonDecode(subResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.subject;
-                }
-                if (bodyResp.statusCode == 200) {
-                  email.body = (jsonDecode(bodyResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.body;
-                }
-              }
-            } else if (subEnv.containsKey('otp_key_id') && subEnv.containsKey('ciphertext_b64url')) {
-              // Hybrid PQC+OTP: PQC for key exchange + OTP for message encryption
-              print('[sent][PQC_2_LAYER] Detected hybrid PQC+OTP, using OTP decryption');
-              final subjectResponse = await http.post(
-                Uri.parse('http://127.0.0.1:8081/decrypt'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode(subEnv),
-              );
-              final bodyResponse = await http.post(
-                Uri.parse('http://127.0.0.1:8081/decrypt'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode(bodyEnv),
-              );
-              
-              if (subjectResponse.statusCode == 200) {
-                final subjectResult = jsonDecode(subjectResponse.body);
-                email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
-              }
-              if (bodyResponse.statusCode == 200) {
-                final bodyResult = jsonDecode(bodyResponse.body);
-                email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
-              }
-            }
-          } catch (e) {
-            print('[sent][PQC_2_LAYER] decrypt failed: $e');
-          }
-        }
-
-        // PQC 3-layer decrypt
-        if (email.encryptionMethod == 'PQC_3_LAYER') {
-          try {
-            print('[sent][PQC_3_LAYER] Attempting decryption for email ${email.id}');
-            print('[sent][PQC_3_LAYER] Subject length: ${email.subject.length}, Body length: ${email.body.length}');
-            
-            Map<String, dynamic> subEnv;
-            Map<String, dynamic> bodyEnv;
-            
-            try {
-              subEnv = jsonDecode(email.subject) as Map<String, dynamic>;
-            } catch (e) {
-              print('[sent][PQC_3_LAYER] Failed to parse subject JSON: $e');
-              print('[sent][PQC_3_LAYER] Subject content: ${email.subject.substring(0, math.min(100, email.subject.length))}...');
-              continue;
-            }
-            
-            try {
-              bodyEnv = jsonDecode(email.body) as Map<String, dynamic>;
-            } catch (e) {
-              print('[sent][PQC_3_LAYER] Failed to parse body JSON: $e');
-              print('[sent][PQC_3_LAYER] Body content: ${email.body.substring(0, math.min(100, email.body.length))}...');
-              continue;
-            }
-            
-            // Check if this is pure PQC or hybrid PQC+AES+OTP
-            if (subEnv.containsKey('encryptedBody') && subEnv.containsKey('pqcCiphertext')) {
-              // Pure PQC decryption
-              final priv = EmailService.pqcPrivateKey;
-              if (priv != null && priv.isNotEmpty) {
-                try {
-                  final subResp = await http.post(
-                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode({
-                      'encryptedBody': subEnv['encryptedBody'],
-                      'pqcCiphertext': subEnv['pqcCiphertext'],
-                      'encryptedKeyId': subEnv['encryptedKeyId'] ?? subEnv['keyId'] ?? '',
-                      'privateKey': priv,
-                    }),
-                  );
-                  final bodyResp = await http.post(
-                    Uri.parse('http://localhost:5001/api/pqc/decrypt'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode({
-                      'encryptedBody': bodyEnv['encryptedBody'],
-                      'pqcCiphertext': bodyEnv['pqcCiphertext'],
-                      'encryptedKeyId': bodyEnv['encryptedKeyId'] ?? bodyEnv['keyId'] ?? '',
-                      'privateKey': priv,
-                    }),
-                  );
-
-                  if (subResp.statusCode == 200) {
-                    email.subject = (jsonDecode(subResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.subject;
-                  }
-                  if (bodyResp.statusCode == 200) {
-                    email.body = (jsonDecode(bodyResp.body) as Map<String, dynamic>)['data']['plaintext'] ?? email.body;
-                  }
-                } catch (e) {
-                  print('[sent][PQC_3_LAYER] HTTP request failed: $e');
-                }
-              }
-            } else if (subEnv.containsKey('otp_key_id') && subEnv.containsKey('ciphertext_b64url')) {
-              // Hybrid PQC+AES+OTP: PQC for key exchange + AES + OTP for message encryption
-              print('[sent][PQC_3_LAYER] Detected hybrid PQC+AES+OTP, using OTP decryption');
-              final subjectResponse = await http.post(
-                Uri.parse('http://127.0.0.1:8081/decrypt'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode(subEnv),
-              );
-              final bodyResponse = await http.post(
-                Uri.parse('http://127.0.0.1:8081/decrypt'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode(bodyEnv),
-              );
-              
-              if (subjectResponse.statusCode == 200) {
-                final subjectResult = jsonDecode(subjectResponse.body);
-                email.subject = subjectResult['plaintext'] ?? 'Decryption Failed';
-              }
-              if (bodyResponse.statusCode == 200) {
-                final bodyResult = jsonDecode(bodyResponse.body);
-                email.body = bodyResult['plaintext'] ?? 'Decryption Failed';
-              }
-            }
-          } catch (e) {
-            print('[sent][PQC_3_LAYER] decrypt failed: $e');
-          }
-        }
       }
 
       setState(() => _emails = emails);
@@ -274,7 +111,7 @@ class _SentScreenState extends State<SentScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(email.subject),
+        title: Text(_extractPlaintext(email.subject)),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -290,7 +127,7 @@ class _SentScreenState extends State<SentScreen> {
                 style: TextStyle(color: Colors.grey.shade600),
               ),
               const SizedBox(height: 16),
-              Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : email.body),
+              Text(_isOtpEnvelope(email.body) ? 'Encrypted message (tap Retry to attempt decrypt again)' : _extractPlaintext(email.body)),
               const SizedBox(height: 16),
               if (email.attachments.isNotEmpty) ...[
                 const Text('Attachments', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -366,7 +203,39 @@ class _SentScreenState extends State<SentScreen> {
 
   String _getPreview(String body) {
     if (_isOtpEnvelope(body)) return 'Encrypted message';
-    return body.length > 100 ? '${body.substring(0, 100)}...' : body;
+    final cleanBody = _extractPlaintext(body);
+    return cleanBody.length > 100 ? '${cleanBody.substring(0, 100)}...' : cleanBody;
+  }
+
+  String _extractPlaintext(String content) {
+    try {
+      // If content doesn't look like JSON, return as-is
+      if (!content.trim().startsWith('{')) {
+        return content;
+      }
+
+      // Try to parse as JSON
+      final json = jsonDecode(content) as Map<String, dynamic>;
+
+      // Check for various plaintext keys
+      if (json.containsKey('plaintext')) {
+        return json['plaintext'] as String;
+      }
+
+      // If it's an encryption envelope (encrypted data), show a user-friendly message
+      if (json.containsKey('encryptedBody') ||
+          json.containsKey('pqcCiphertext') ||
+          json.containsKey('ciphertext_b64url') ||
+          json.containsKey('ciphertextHex')) {
+        return '[Encrypted message - decryption in progress]';
+      }
+
+      // Otherwise return original content
+      return content;
+    } catch (e) {
+      // If JSON parsing fails, return original content
+      return content;
+    }
   }
 
   bool _isOtpEnvelope(String body) {
@@ -511,7 +380,7 @@ class _SentScreenState extends State<SentScreen> {
                                       ),
                                     ),
                                     title: Text(
-                                      email.subject,
+                                      _extractPlaintext(email.subject),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                       ),

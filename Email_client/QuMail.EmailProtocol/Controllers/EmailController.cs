@@ -107,6 +107,151 @@ public class EmailController : ControllerBase
         return Ok(new { success = true });
     }
 
+    /// <summary>
+    /// Send email with PQC_2_LAYER - PQC data already encrypted on frontend
+    /// POST /api/email/send-pqc2-encrypted
+    /// Flow: PQC_ENCRYPTED (from frontend - Kyber512) → OTP → Database
+    /// </summary>
+    [HttpPost("send-pqc2-encrypted")]
+    public async Task<IActionResult> SendPqc2EncryptedEmail([FromBody] SendPqcEncryptedRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Sending PQC_2_LAYER email from {Sender} to {Recipient}", request.SenderEmail, request.RecipientEmail);
+
+            // Validate recipient exists
+            var recipient = await _context.Users.FirstOrDefaultAsync(u =>
+                u.Email == request.RecipientEmail || u.ExternalEmail == request.RecipientEmail);
+            if (recipient == null)
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = "Recipient email not found in our system"
+                });
+            }
+
+            // Apply OTP encryption to PQC-encrypted data (no AES layer)
+            _logger.LogInformation("Applying OTP encryption to PQC data");
+            var finalSubject = await EncryptBodyAsync(request.PqcEncryptedSubject);
+            var finalBody = await EncryptBodyAsync(request.PqcEncryptedBody);
+
+            // Resolve sender email
+            var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
+            var senderOriginal = !string.IsNullOrWhiteSpace(sender?.ExternalEmail) ?
+                sender!.ExternalEmail! : request.SenderEmail;
+
+            // Create email record
+            var email = new Email
+            {
+                Id = Guid.NewGuid(),
+                SenderEmail = senderOriginal,
+                RecipientEmail = request.RecipientEmail,
+                Subject = finalSubject,
+                Body = finalBody,
+                EncryptionMethod = "PQC_2_LAYER", // PQC + OTP (Kyber512)
+                Attachments = null, // TODO: Handle attachments
+                SentAt = DateTime.UtcNow,
+                IsRead = false
+            };
+
+            _context.Emails.Add(email);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("PQC_2_LAYER email saved with ID: {EmailId}", email.Id);
+
+            return Ok(new {
+                success = true,
+                message = "PQC_2_LAYER email sent successfully",
+                emailId = email.Id,
+                encryptionMethod = "PQC_2_LAYER"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send PQC_2_LAYER email");
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to send PQC_2_LAYER email: {ex.Message}",
+                detail = ex.InnerException?.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Send email with PQC_3_LAYER - PQC data already encrypted on frontend
+    /// POST /api/email/send-pqc-encrypted
+    /// Flow: PQC_ENCRYPTED (from frontend - Kyber1024) → AES → OTP → Database
+    /// </summary>
+    [HttpPost("send-pqc-encrypted")]
+    public async Task<IActionResult> SendPqcEncryptedEmail([FromBody] SendPqcEncryptedRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Sending PQC-encrypted email from {Sender} to {Recipient}", request.SenderEmail, request.RecipientEmail);
+
+            // Validate recipient exists
+            var recipient = await _context.Users.FirstOrDefaultAsync(u =>
+                u.Email == request.RecipientEmail || u.ExternalEmail == request.RecipientEmail);
+            if (recipient == null)
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = "Recipient email not found in our system"
+                });
+            }
+
+            // PHASE 2: Apply AES encryption to PQC-encrypted data
+            _logger.LogInformation("Applying AES encryption to PQC data");
+            var aesSubject = await EncryptWithAESGCMAsync(request.PqcEncryptedSubject);
+            var aesBody = await EncryptWithAESGCMAsync(request.PqcEncryptedBody);
+
+            // PHASE 3: Apply OTP encryption to AES-encrypted data
+            _logger.LogInformation("Applying OTP encryption to AES data");
+            var finalSubject = await EncryptBodyAsync(aesSubject);
+            var finalBody = await EncryptBodyAsync(aesBody);
+
+            // Resolve sender email
+            var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
+            var senderOriginal = !string.IsNullOrWhiteSpace(sender?.ExternalEmail) ?
+                sender!.ExternalEmail! : request.SenderEmail;
+
+            // Create email record
+            var email = new Email
+            {
+                Id = Guid.NewGuid(),
+                SenderEmail = senderOriginal,
+                RecipientEmail = request.RecipientEmail,
+                Subject = finalSubject,
+                Body = finalBody,
+                EncryptionMethod = "PQC_3_LAYER", // PQC + AES + OTP
+                Attachments = null, // TODO: Handle attachments
+                SentAt = DateTime.UtcNow,
+                IsRead = false
+            };
+
+            _context.Emails.Add(email);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("PQC email saved with ID: {EmailId}", email.Id);
+
+            return Ok(new {
+                success = true,
+                message = "PQC email sent successfully",
+                emailId = email.Id,
+                encryptionMethod = "PQC_3_LAYER"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send PQC-encrypted email");
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to send PQC email: {ex.Message}",
+                detail = ex.InnerException?.Message
+            });
+        }
+    }
+
     [HttpPost("send")]
     public async Task<IActionResult> SendEmail([FromBody] SendEmailRequest request)
     {
@@ -173,14 +318,14 @@ public class EmailController : ControllerBase
                         _logger.LogInformation("Using PQC 2-layer encryption");
                         subjectEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Subject, request.RecipientPublicKey);
                         bodyEnvelope = await EncryptSingleWithPQC2LayerAsync(request.Body, request.RecipientPublicKey);
-                        attachmentsJson = await EncryptAttachmentsOTPAsync(request.Attachments);
+                        attachmentsJson = await EncryptAttachmentsPQC2LayerAsync(request.Attachments, request.RecipientPublicKey);
                         break;
 
                     case "PQC_3_LAYER":
                         _logger.LogInformation("Using PQC 3-layer encryption");
                         subjectEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Subject, request.RecipientPublicKey);
                         bodyEnvelope = await EncryptSingleWithPQC3LayerAsync(request.Body, request.RecipientPublicKey);
-                        attachmentsJson = await EncryptAttachmentsOTPAsync(request.Attachments);
+                        attachmentsJson = await EncryptAttachmentsPQC3LayerAsync(request.Attachments, request.RecipientPublicKey);
                         break;
 
                     default:
@@ -286,29 +431,67 @@ public class EmailController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("===== BACKEND: FETCHING SENT EMAILS =====");
+            _logger.LogInformation("User email: {UserEmail}", userEmail);
+
             var emailEntities = await _context.Emails
                 .Where(e => e.SenderEmail == userEmail)
                 .OrderByDescending(e => e.SentAt)
                 .ToListAsync();
 
+            _logger.LogInformation("Found {Count} emails in database", emailEntities.Count);
+
             var emails = new List<object>(emailEntities.Count);
-            foreach (var e in emailEntities)
+            for (int i = 0; i < emailEntities.Count; i++)
             {
-                var decryptedBody = await TryDecryptBodyAsync(e.Body);
-                var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
-                var attachments = await TryDecryptAttachmentsAsync(e.Attachments);
-                emails.Add(new
+                var e = emailEntities[i];
+                _logger.LogInformation("----- Processing email {Index} -----", i);
+                _logger.LogInformation("Email ID: {Id}", e.Id);
+                _logger.LogInformation("Encryption method: {Method}", e.EncryptionMethod);
+                _logger.LogInformation("Subject length: {Length}", e.Subject?.Length ?? 0);
+                _logger.LogInformation("Body length: {Length}", e.Body?.Length ?? 0);
+
+                // For PQC emails, DON'T decrypt - frontend will load from local database
+                if (e.EncryptionMethod == "PQC_2_LAYER" || e.EncryptionMethod == "PQC_3_LAYER")
                 {
-                    e.Id,
-                    e.SenderEmail,
-                    e.RecipientEmail,
-                    Subject = decryptedSubject,
-                    Body = decryptedBody,
-                    attachments = attachments,
-                    e.SentAt,
-                    e.IsRead
-                });
+                    _logger.LogInformation("PQC email detected - returning encrypted data (frontend will load from local DB)");
+                    emails.Add(new
+                    {
+                        e.Id,
+                        e.SenderEmail,
+                        e.RecipientEmail,
+                        Subject = e.Subject, // Return encrypted - frontend will replace with local plaintext
+                        Body = e.Body,       // Return encrypted - frontend will replace with local plaintext
+                        attachments = new object[] { },
+                        e.SentAt,
+                        e.IsRead,
+                        e.EncryptionMethod
+                    });
+                }
+                else
+                {
+                    // Non-PQC emails: decrypt on backend
+                    _logger.LogInformation("Non-PQC email - decrypting on backend");
+                    var decryptedBody = await TryDecryptBodyAsync(e.Body);
+                    var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
+                    var attachments = await TryDecryptAttachmentsAsync(e.Attachments);
+
+                    emails.Add(new
+                    {
+                        e.Id,
+                        e.SenderEmail,
+                        e.RecipientEmail,
+                        Subject = decryptedSubject,
+                        Body = decryptedBody,
+                        attachments = attachments,
+                        e.SentAt,
+                        e.IsRead,
+                        e.EncryptionMethod
+                    });
+                }
             }
+
+            _logger.LogInformation("===== BACKEND: SENT EMAILS RESPONSE READY: {Count} emails =====", emails.Count);
 
             return Ok(new {
                 success = true,
@@ -317,6 +500,7 @@ public class EmailController : ControllerBase
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to get sent emails");
             return BadRequest(new {
                 success = false,
                 message = $"Failed to get sent emails: {ex.Message}"
@@ -332,25 +516,217 @@ public class EmailController : ControllerBase
             var email = await _context.Emails.FindAsync(emailId);
             if (email == null)
             {
-                return NotFound(new { 
-                    success = false, 
-                    message = "Email not found" 
+                return NotFound(new {
+                    success = false,
+                    message = "Email not found"
                 });
             }
 
             email.IsRead = true;
             await _context.SaveChangesAsync();
 
-            return Ok(new { 
-                success = true, 
-                message = "Email marked as read" 
+            return Ok(new {
+                success = true,
+                message = "Email marked as read"
             });
         }
         catch (Exception ex)
         {
-            return BadRequest(new { 
-                success = false, 
-                message = $"Failed to mark email as read: {ex.Message}" 
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to mark email as read: {ex.Message}"
+            });
+        }
+    }
+
+    /// <summary>
+    /// Decrypt PQC_2_LAYER email to PQC layer only
+    /// GET /api/email/decrypt-to-pqc2/{emailId}
+    /// Flow: Database (OTP+PQC) → Decrypt OTP → Return PQC_ENCRYPTED to frontend
+    /// Frontend will then decrypt PQC layer with private key from local storage
+    /// </summary>
+    [HttpGet("decrypt-to-pqc2/{emailId}")]
+    public async Task<IActionResult> DecryptToPqc2(Guid emailId)
+    {
+        try
+        {
+            _logger.LogInformation("Decrypting PQC_2_LAYER email {EmailId} to PQC layer", emailId);
+
+            var email = await _context.Emails.FindAsync(emailId);
+            if (email == null)
+            {
+                return NotFound(new {
+                    success = false,
+                    message = "Email not found"
+                });
+            }
+
+            // Only process emails with PQC_2_LAYER encryption
+            if (email.EncryptionMethod != "PQC_2_LAYER")
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = $"This endpoint only supports PQC_2_LAYER emails. Email encryption method: {email.EncryptionMethod}"
+                });
+            }
+
+            // Decrypt OTP layer (outermost and only)
+            _logger.LogInformation("Decrypting OTP layer for subject and body");
+            string pqcSubject, pqcBody;
+
+            if (TryParseEnvelope(email.Subject, out var otpSubjectEnvelope))
+            {
+                pqcSubject = await DecryptOTPAsync(otpSubjectEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse OTP envelope for subject");
+                pqcSubject = email.Subject;
+            }
+
+            if (TryParseEnvelope(email.Body, out var otpBodyEnvelope))
+            {
+                pqcBody = await DecryptOTPAsync(otpBodyEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse OTP envelope for body");
+                pqcBody = email.Body;
+            }
+
+            // Return PQC-encrypted data to frontend
+            _logger.LogInformation("Returning PQC-encrypted data to frontend for client-side decryption");
+
+            return Ok(new {
+                success = true,
+                email = new {
+                    id = email.Id,
+                    senderEmail = email.SenderEmail,
+                    recipientEmail = email.RecipientEmail,
+                    pqcEncryptedSubject = pqcSubject,  // PQC-encrypted, to be decrypted on frontend
+                    pqcEncryptedBody = pqcBody,        // PQC-encrypted, to be decrypted on frontend
+                    sentAt = email.SentAt,
+                    isRead = email.IsRead,
+                    encryptionMethod = email.EncryptionMethod,
+                    requiresPqcDecryption = true       // Flag for frontend
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt PQC_2_LAYER email {EmailId} to PQC layer", emailId);
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to decrypt email: {ex.Message}",
+                detail = ex.InnerException?.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Decrypt PQC_3_LAYER email to PQC layer only (for new PQC architecture)
+    /// GET /api/email/decrypt-to-pqc/{emailId}
+    /// Flow: Database (OTP+AES+PQC) → Decrypt OTP → Decrypt AES → Return PQC_ENCRYPTED to frontend
+    /// Frontend will then decrypt PQC layer with private key from local storage
+    /// </summary>
+    [HttpGet("decrypt-to-pqc/{emailId}")]
+    public async Task<IActionResult> DecryptToPqc(Guid emailId)
+    {
+        try
+        {
+            _logger.LogInformation("Decrypting email {EmailId} to PQC layer", emailId);
+
+            var email = await _context.Emails.FindAsync(emailId);
+            if (email == null)
+            {
+                return NotFound(new {
+                    success = false,
+                    message = "Email not found"
+                });
+            }
+
+            // Only process emails with PQC_3_LAYER encryption
+            if (email.EncryptionMethod != "PQC_3_LAYER")
+            {
+                return BadRequest(new {
+                    success = false,
+                    message = $"This endpoint only supports PQC_3_LAYER emails. Email encryption method: {email.EncryptionMethod}"
+                });
+            }
+
+            // PHASE 1: Decrypt OTP layer (outermost)
+            _logger.LogInformation("Decrypting OTP layer for subject and body");
+            string aesSubject, aesBody;
+
+            if (TryParseEnvelope(email.Subject, out var otpSubjectEnvelope))
+            {
+                aesSubject = await DecryptOTPAsync(otpSubjectEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse OTP envelope for subject");
+                aesSubject = email.Subject;
+            }
+
+            if (TryParseEnvelope(email.Body, out var otpBodyEnvelope))
+            {
+                aesBody = await DecryptOTPAsync(otpBodyEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse OTP envelope for body");
+                aesBody = email.Body;
+            }
+
+            // PHASE 2: Decrypt AES layer (middle)
+            _logger.LogInformation("Decrypting AES layer for subject and body");
+            string pqcSubject, pqcBody;
+
+            if (TryParseAESEnvelope(aesSubject, out var aesSubjectEnvelope))
+            {
+                pqcSubject = await DecryptAESAsync(aesSubjectEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse AES envelope for subject");
+                pqcSubject = aesSubject;
+            }
+
+            if (TryParseAESEnvelope(aesBody, out var aesBodyEnvelope))
+            {
+                pqcBody = await DecryptAESAsync(aesBodyEnvelope);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to parse AES envelope for body");
+                pqcBody = aesBody;
+            }
+
+            // PHASE 3: Return PQC-encrypted data to frontend
+            _logger.LogInformation("Returning PQC-encrypted data to frontend for client-side decryption");
+
+            return Ok(new {
+                success = true,
+                email = new {
+                    id = email.Id,
+                    senderEmail = email.SenderEmail,
+                    recipientEmail = email.RecipientEmail,
+                    pqcEncryptedSubject = pqcSubject,  // PQC-encrypted, to be decrypted on frontend
+                    pqcEncryptedBody = pqcBody,        // PQC-encrypted, to be decrypted on frontend
+                    sentAt = email.SentAt,
+                    isRead = email.IsRead,
+                    encryptionMethod = email.EncryptionMethod,
+                    requiresPqcDecryption = true       // Flag for frontend
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt email {EmailId} to PQC layer", emailId);
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to decrypt email: {ex.Message}",
+                detail = ex.InnerException?.Message
             });
         }
     }
@@ -932,9 +1308,9 @@ public class EmailController : ControllerBase
         try
         {
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
-            
-            return Ok(new { 
-                success = true, 
+
+            return Ok(new {
+                success = true,
                 exists = user != null,
                 name = user?.Name,
                 message = user != null ? "User exists" : "User not found"
@@ -942,9 +1318,55 @@ public class EmailController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new { 
-                success = false, 
-                message = $"Failed to validate user: {ex.Message}" 
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to validate user: {ex.Message}"
+            });
+        }
+    }
+
+    /// <summary>
+    /// Validate recipient and return their PQC public key
+    /// POST /api/email/validate-recipient
+    /// Body: { recipientEmail }
+    /// Response: { exists: true/false, publicKey: "..." }
+    /// </summary>
+    [HttpPost("validate-recipient")]
+    public async Task<IActionResult> ValidateRecipient([FromBody] ValidateRecipientRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.RecipientEmail))
+            {
+                return BadRequest(new { success = false, message = "Recipient email is required" });
+            }
+
+            var recipient = await _context.Users.FirstOrDefaultAsync(u =>
+                u.Email == request.RecipientEmail || u.ExternalEmail == request.RecipientEmail);
+
+            if (recipient == null)
+            {
+                return Ok(new {
+                    success = true,
+                    exists = false,
+                    message = "Recipient not found"
+                });
+            }
+
+            return Ok(new {
+                success = true,
+                exists = true,
+                publicKey = recipient.PqcPublicKey ?? "",
+                name = recipient.Name,
+                message = "Recipient found"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to validate recipient");
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to validate recipient: {ex.Message}"
             });
         }
     }
@@ -1172,6 +1594,19 @@ public class ValidateUserRequest
     public string Email { get; set; } = string.Empty;
 }
 
+public class ValidateRecipientRequest
+{
+    public string RecipientEmail { get; set; } = string.Empty;
+}
+
+public class SendPqcEncryptedRequest
+{
+    public string SenderEmail { get; set; } = string.Empty;
+    public string RecipientEmail { get; set; } = string.Empty;
+    public string PqcEncryptedSubject { get; set; } = string.Empty;
+    public string PqcEncryptedBody { get; set; } = string.Empty;
+}
+
 // Result classes for encryption methods
 public class EncryptionResult
 {
@@ -1182,10 +1617,19 @@ public class EncryptionResult
 
 public class AESEncryptionResult
 {
+    [JsonPropertyName("key_id")]
     public string KeyId { get; set; } = string.Empty;
+
+    [JsonPropertyName("iv_hex")]
     public string IvHex { get; set; } = string.Empty;
+
+    [JsonPropertyName("ciphertext_hex")]
     public string CiphertextHex { get; set; } = string.Empty;
+
+    [JsonPropertyName("tag_hex")]
     public string TagHex { get; set; } = string.Empty;
+
+    [JsonPropertyName("aad_hex")]
     public string AadHex { get; set; } = string.Empty;
 }
 

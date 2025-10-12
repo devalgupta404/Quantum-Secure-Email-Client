@@ -50,6 +50,12 @@ dependencies:
   file_picker: ^8.1.2
   file_saver: ^0.2.12
 
+  # Local SQLite database
+  sqflite: ^2.3.0
+  sqflite_common_ffi: ^2.3.0
+  path_provider: ^2.1.1
+  path: ^1.8.3
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
