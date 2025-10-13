@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart';
+import '../utils/base64_utils.dart';
 
 class InboxScreen extends StatefulWidget {
   const InboxScreen({super.key});
@@ -434,33 +435,17 @@ class _InboxScreenState extends State<InboxScreen> {
     print('[_decodeBase64MaybeUrl] Input length: ${input.length}');
     print('[_decodeBase64MaybeUrl] Input preview: ${input.substring(0, input.length > 50 ? 50 : input.length)}');
 
+    // Use Base64Utils for consistent decoding
+    print('[_decodeBase64MaybeUrl] Debug info: ${Base64Utils.getDebugInfo(input)}');
+
     try {
-      // Try standard base64 first
-      print('[_decodeBase64MaybeUrl] Trying standard base64...');
-      final result = Uint8List.fromList(base64Decode(input));
-      print('[_decodeBase64MaybeUrl] ✅ Standard base64 decode succeeded, ${result.length} bytes');
+      print('[_decodeBase64MaybeUrl] Using Base64Utils.safelyDecode...');
+      final result = Base64Utils.safelyDecode(input);
+      print('[_decodeBase64MaybeUrl] ✅ Decode succeeded, ${result.length} bytes');
       return result;
     } catch (e) {
-      print('[_decodeBase64MaybeUrl] ❌ Standard base64 failed: $e');
-      try {
-        // Try base64url variant
-        print('[_decodeBase64MaybeUrl] Trying base64url variant...');
-        var s = input.replaceAll('-', '+').replaceAll('_', '/');
-        switch (s.length % 4) {
-          case 2:
-            s += '==';
-            break;
-          case 3:
-            s += '=';
-            break;
-        }
-        final result = Uint8List.fromList(base64Decode(s));
-        print('[_decodeBase64MaybeUrl] ✅ Base64url decode succeeded, ${result.length} bytes');
-        return result;
-      } catch (e2) {
-        print('[_decodeBase64MaybeUrl] ❌ Base64url decode also failed: $e2');
-        return null;
-      }
+      print('[_decodeBase64MaybeUrl] ❌ Decode failed: $e');
+      return null;
     }
   }
 

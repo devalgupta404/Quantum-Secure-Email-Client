@@ -8,6 +8,7 @@ import '../app.dart';
 import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
+import '../utils/base64_utils.dart';
 
 class ComposeScreen extends StatefulWidget {
   const ComposeScreen({super.key});
@@ -45,7 +46,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
       _attachments.clear();
       for (final f in result.files) {
         if (f.bytes == null) continue;
-        final b64 = base64Encode(f.bytes!);
+        // Use utility function for consistent base64 encoding
+        final b64 = Base64Utils.encode(f.bytes!);
         _attachments.add(SendAttachment(fileName: f.name, contentType: 'application/octet-stream', contentBase64: b64));
       }
     });
