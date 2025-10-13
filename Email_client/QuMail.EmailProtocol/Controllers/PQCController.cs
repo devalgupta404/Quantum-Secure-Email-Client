@@ -164,43 +164,27 @@ public class PQCController : ControllerBase
             // UseAES=true: 3-layer encryption (PQC + AES + OTP) using Level3HybridEncryption
             // UseAES=false: 2-layer encryption (PQC + OTP) using Level3PQCEmailService
             string decrypted;
-            try
+            if (request.UseAES)
             {
-                if (request.UseAES)
-                {
-                    // 3-layer decryption path (PQC + AES + OTP)
-                    Console.WriteLine("[PQCController] Using 3-layer decryption (PQC + AES + OTP)");
-                    decrypted = _hybridEncryption.DecryptAsync(
-                        request.EncryptedBody,
-                        request.PQCCiphertext,
-                        request.EncryptedKeyId,
-                        request.PrivateKey,
-                        request.Algorithm ?? "Kyber512",
-                        usedAES: true).Result;
-                }
-                else
-                {
-                    // 2-layer decryption path (PQC + OTP)
-                    Console.WriteLine("[PQCController] Using 2-layer decryption (PQC + OTP)");
-                    decrypted = _pqcEmailService.DecryptEmail(
-                        request.EncryptedBody,
-                        request.PQCCiphertext,
-                        request.EncryptedKeyId,
-                        request.PrivateKey);
-                }
+                // 3-layer decryption path (PQC + AES + OTP)
+                Console.WriteLine("[PQCController] Using 3-layer decryption (PQC + AES + OTP)");
+                decrypted = _hybridEncryption.DecryptAsync(
+                    request.EncryptedBody,
+                    request.PQCCiphertext,
+                    request.EncryptedKeyId,
+                    request.PrivateKey,
+                    request.Algorithm ?? "Kyber512",
+                    usedAES: true).Result;
             }
-            catch (Exception) when (request.EncryptedKeyId?.StartsWith("PQC-") == true)
+            else
             {
-                // This looks like a legacy email where encryptedKeyId is actually a plain keyId
-                // Try to decrypt using legacy method (without KeyManager)
-                try
-                {
-                    decrypted = DecryptLegacyEmail(request.EncryptedBody, request.PQCCiphertext, request.EncryptedKeyId, request.PrivateKey);
-                }
-                catch (Exception legacyEx)
-                {
-                    throw new ArgumentException($"Failed to decrypt legacy email: {legacyEx.Message}", legacyEx);
-                }
+                // 2-layer decryption path (PQC + OTP)
+                Console.WriteLine("[PQCController] Using 2-layer decryption (PQC + OTP)");
+                decrypted = _pqcEmailService.DecryptEmail(
+                    request.EncryptedBody,
+                    request.PQCCiphertext,
+                    request.EncryptedKeyId,
+                    request.PrivateKey);
             }
 
             return Ok(new
@@ -399,46 +383,6 @@ public class PQCController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Legacy decryption method for emails encrypted with KeyManager but stored with old format
-    /// This method handles emails where keyId is the plain keyId (not encrypted)
-    /// but the email was actually encrypted using the KeyManager system
-    /// </summary>
-    private string DecryptLegacyEmail(string encryptedBody, string pqcCiphertext, string keyId, string privateKey)
-    {
-        try
-        {
-            // For these "legacy" emails, the keyId is actually the plain keyId from KeyManager
-            // The email was encrypted using the KeyManager system, but stored with the old format
-            // However, since KeyManager generates new random keys each time, we can't retrieve the original key
-            // Instead, we need to use the PQC shared secret directly as the OTP key
-            
-            // Step 1: Perform Kyber decapsulation to recover shared secret
-            var sharedSecretBase64 = _kyberPQC.Decapsulate(pqcCiphertext, privateKey);
-            var pqcSharedSecret = Convert.FromBase64String(sharedSecretBase64);
-
-            // Step 2: For legacy emails, use the PQC shared secret directly as the OTP key
-            // This is a simplified approach that doesn't use KeyManager
-            var encryptedBytes = Convert.FromBase64String(encryptedBody);
-
-            // Use the PQC shared secret as the OTP key (truncated to match data length)
-            var otpKey = pqcSharedSecret.Take(encryptedBytes.Length).ToArray();
-
-            // Step 3: Decrypt using XOR (OTP)
-            var decryptedBytes = new byte[encryptedBytes.Length];
-            for (int i = 0; i < encryptedBytes.Length; i++)
-            {
-                decryptedBytes[i] = (byte)(encryptedBytes[i] ^ otpKey[i]);
-            }
-
-            // Step 4: Convert back to string
-            return Encoding.UTF8.GetString(decryptedBytes);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("Failed to decrypt legacy email", ex);
-        }
-    }
 }
 
 // Request/Response Models
