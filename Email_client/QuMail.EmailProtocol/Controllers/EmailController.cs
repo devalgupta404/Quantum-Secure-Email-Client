@@ -461,34 +461,54 @@ public class EmailController : ControllerBase
             var emails = new List<object>(emailEntities.Count);
             foreach (var e in emailEntities)
             {
-                // Use automatic decryption detection instead of relying on stored encryption method
-                var decryptedBody = await TryDecryptBodyAsync(e.Body);
-                var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
-                var attachments = await TryDecryptAttachmentsAsync(e.Attachments);
-                emails.Add(new
+                // For PQC emails, DON'T decrypt - frontend will call decrypt-to-pqc endpoint separately
+                if (e.EncryptionMethod == "PQC_2_LAYER" || e.EncryptionMethod == "PQC_3_LAYER")
                 {
-                    e.Id,
-                    e.SenderEmail,
-                    e.RecipientEmail,
-                    Subject = decryptedSubject,
-                    Body = decryptedBody,
-                    attachments = attachments,
-                    e.SentAt,
-                    e.IsRead,
-                    e.EncryptionMethod
-                });
+                    _logger.LogInformation("PQC email detected - returning encrypted data (frontend will decrypt via separate endpoint)");
+                    emails.Add(new
+                    {
+                        e.Id,
+                        e.SenderEmail,
+                        e.RecipientEmail,
+                        Subject = e.Subject,     // Return encrypted - frontend will decrypt via /decrypt-to-pqc endpoint
+                        Body = e.Body,           // Return encrypted - frontend will decrypt via /decrypt-to-pqc endpoint
+                        attachments = new object[] { },  // Don't include attachments in list view
+                        e.SentAt,
+                        e.IsRead,
+                        e.EncryptionMethod
+                    });
+                }
+                else
+                {
+                    // For non-PQC emails, use automatic decryption
+                    var decryptedBody = await TryDecryptBodyAsync(e.Body);
+                    var decryptedSubject = await TryDecryptBodyAsync(e.Subject);
+                    var attachments = await TryDecryptAttachmentsAsync(e.Attachments);
+                    emails.Add(new
+                    {
+                        e.Id,
+                        e.SenderEmail,
+                        e.RecipientEmail,
+                        Subject = decryptedSubject,
+                        Body = decryptedBody,
+                        attachments = attachments,
+                        e.SentAt,
+                        e.IsRead,
+                        e.EncryptionMethod
+                    });
+                }
             }
 
-            return Ok(new { 
-                success = true, 
-                emails = emails 
+            return Ok(new {
+                success = true,
+                emails = emails
             });
         }
         catch (Exception ex)
         {
-            return BadRequest(new { 
-                success = false, 
-                message = $"Failed to get inbox: {ex.Message}" 
+            return BadRequest(new {
+                success = false,
+                message = $"Failed to get inbox: {ex.Message}"
             });
         }
     }
