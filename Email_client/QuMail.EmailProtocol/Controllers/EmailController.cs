@@ -262,8 +262,9 @@ public class EmailController : ControllerBase
                     // Step 1: Encrypt with PQC (ContentBase64 is already base64, use directly!)
                     var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipient.PqcPublicKey);
 
-                    // Step 2: Prepare PQC JSON envelope for AES encryption (base64 encode to preserve structure)
-                    var pqcEnvelopeForAES = PreparePqcEnvelopeForAES(pqcEnvelope);
+                    // Step 2: For attachments, use PQC envelope directly (no base64 encoding needed)
+                    // Attachments are already base64, so we don't need to base64 encode the JSON envelope
+                    var pqcEnvelopeForAES = pqcEnvelope;
 
                     // Step 3: Wrap PQC envelope with AES (NEW architecture)
                     var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelopeForAES);
@@ -932,9 +933,9 @@ public class EmailController : ControllerBase
                                             // DecryptAESAsync now throws exceptions on failure (no need for string check)
                                             var aesDecryptedResult = await DecryptAESAsync(aesEnvelopeObj);
 
-                                            // Restore the PQC JSON envelope from AES decryption result
-                                            // RestorePqcEnvelopeFromAES now throws exceptions on failure
-                                            var pqcEnvelope = RestorePqcEnvelopeFromAES(aesDecryptedResult);
+                                            // For attachments, AES decryption result is the PQC envelope directly
+                                            // No need to restore from base64 since we didn't base64 encode it during encryption
+                                            var pqcEnvelope = aesDecryptedResult;
 
                                             decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
                                             _logger.LogInformation("Successfully decrypted attachment {Index}: {FileName}", idx, fileName);
@@ -1841,8 +1842,9 @@ public class EmailController : ControllerBase
                 // Phase 1: PQC encryption (ContentBase64 is already base64, use directly!)
                 var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
 
-                // Phase 2: Prepare PQC envelope for AES encryption (base64 encode to preserve structure)
-                var pqcEnvelopeForAES = PreparePqcEnvelopeForAES(pqcEnvelope);
+                // Phase 2: For attachments, use PQC envelope directly (no base64 encoding needed)
+                // Attachments are already base64, so we don't need to base64 encode the JSON envelope
+                var pqcEnvelopeForAES = pqcEnvelope;
 
                 // Phase 3: AES encryption
                 var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelopeForAES);
