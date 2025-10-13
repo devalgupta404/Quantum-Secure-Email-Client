@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database/database_helper.dart';
 import '../models/sent_pqc_email.dart';
+import '../models/cached_inbox_email.dart';
 
 class EmailService {
   static const String _baseUrl = 'https://quantum.pointblank.club/api';
@@ -297,6 +298,14 @@ class EmailService {
       }
 
       print('[EmailService] Decrypting PQC data on frontend...');
+      print('[EmailService] Raw data preview: ${pqcEncryptedData.substring(0, pqcEncryptedData.length > 100 ? 100 : pqcEncryptedData.length)}');
+
+      // Check if data is valid JSON before parsing
+      if (!pqcEncryptedData.trim().startsWith('{')) {
+        print('[EmailService] ❌ Invalid PQC data format - not JSON');
+        print('[EmailService] Data starts with: "${pqcEncryptedData.substring(0, 10)}"');
+        return null;
+      }
 
       // Parse the PQC envelope to extract all fields
       final envelope = jsonDecode(pqcEncryptedData) as Map<String, dynamic>;
@@ -960,73 +969,302 @@ class EmailService {
 
   Future<List<Email>> getInbox(String userEmail) async {
     try {
-      print('[EmailService] Fetching inbox for: $userEmail');
+      print('[EmailService] Loading inbox for: $userEmail');
+
+      // Step 1: Load cached emails first for instant display
+      final cachedEmails = await _dbHelper.getCachedInboxEmails(userEmail);
+      print('[EmailService] Found ${cachedEmails.length} cached emails');
+
+      // Step 2: Fetch from backend to get current email list
       final response = await http.get(
         Uri.parse('$_baseUrl/email/inbox/$userEmail'),
         headers: {'Content-Type': 'application/json'},
       );
 
-      print('[EmailService] Response status: ${response.statusCode}');
-      print('[EmailService] Response body length: ${response.body.length}');
+      if (response.statusCode != 200) {
+        print('[EmailService] Backend error: ${response.statusCode}');
+        return _convertCachedToEmails(cachedEmails);
+      }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print('[EmailService] Response data keys: ${data.keys.toList()}');
+      final data = jsonDecode(response.body);
+      if (data['success'] != true) {
+        print('[EmailService] Backend returned success=false');
+        return _convertCachedToEmails(cachedEmails);
+      }
 
-        if (data['success'] == true) {
-          final emailsJson = data['emails'] as List;
-          print('[EmailService] Found ${emailsJson.length} emails');
+      final emailsJson = data['emails'] as List;
+      print('[EmailService] Backend returned ${emailsJson.length} emails');
 
-          final emails = <Email>[];
-          for (int i = 0; i < emailsJson.length; i++) {
-            final emailJson = emailsJson[i];
-            print('[EmailService] Email $i: ID=${emailJson['id']}, Method=${emailJson['encryptionMethod']}');
+      // Step 3: Process emails efficiently
+      final emails = <Email>[];
+      final emailsToFetch = <Map<String, dynamic>>[];
+      
+      // First pass: identify which emails need fresh fetching
+      for (final emailJson in emailsJson) {
+        final emailId = emailJson['id'] as String;
+        
+        // Check if this email is in cache and marked as cached
+        final cachedEmail = cachedEmails.firstWhere(
+          (cached) => cached.id == emailId,
+          orElse: () => CachedInboxEmail(
+            id: '',
+            subject: '',
+            body: '',
+            senderEmail: '',
+            recipientEmail: '',
+            receivedAt: DateTime.now(),
+            encryptionMethod: '',
+            cachedAt: DateTime.now(),
+          ),
+        );
 
-            // For NEW PQC methods, use new decryption flow
-            if (emailJson['encryptionMethod'] == 'PQC_2_LAYER') {
-              print('[EmailService] Detected PQC_2_LAYER email, using new decryption flow');
-              final pqcEmail = await getPqc2Email(emailJson['id'] as String);
-              if (pqcEmail != null) {
-                emails.add(pqcEmail);
-              } else {
-                // Fallback: add email with encrypted data
-                emails.add(Email.fromJson(emailJson));
-              }
-            } else if (emailJson['encryptionMethod'] == 'PQC_3_LAYER') {
-              print('[EmailService] Detected PQC_3_LAYER email, using new decryption flow');
-              final pqcEmail = await getPqc3Email(emailJson['id'] as String);
-              if (pqcEmail != null) {
-                emails.add(pqcEmail);
-              } else {
-                // Fallback: add email with encrypted data
-                emails.add(Email.fromJson(emailJson));
-              }
-            } else {
-              // Old encryption methods: backend already decrypted
-              emails.add(Email.fromJson(emailJson));
-            }
+        if (cachedEmail.id.isNotEmpty && cachedEmail.isCached) {
+          // Use cached email immediately
+          emails.add(Email(
+            id: cachedEmail.id,
+            senderEmail: cachedEmail.senderEmail,
+            recipientEmail: cachedEmail.recipientEmail,
+            subject: cachedEmail.subject,
+            body: cachedEmail.body,
+            attachments: <EmailAttachment>[],
+            sentAt: cachedEmail.receivedAt,
+            isRead: true,
+            encryptionMethod: cachedEmail.encryptionMethod,
+          ));
+        } else {
+          // Add to list for batch fetching
+          emailsToFetch.add(emailJson);
+        }
+      }
+
+      // Step 4: Batch fetch emails that aren't cached
+      if (emailsToFetch.isNotEmpty) {
+        print('[EmailService] Fetching ${emailsToFetch.length} fresh emails...');
+        
+        // Get all email IDs to check for existing cache in batch
+        final emailIdsToFetch = emailsToFetch.map((e) => e['id'] as String).toList();
+        final existingCacheIds = <String>{};
+        
+        // Batch check which emails are already cached
+        for (final emailId in emailIdsToFetch) {
+          final isCached = await isEmailCached(emailId, userEmail);
+          if (isCached) {
+            existingCacheIds.add(emailId);
+          }
+        }
+        
+        print('[EmailService] ${existingCacheIds.length} emails already cached, fetching ${emailIdsToFetch.length - existingCacheIds.length} fresh');
+        
+        // Fetch emails that aren't cached
+        for (final emailJson in emailsToFetch) {
+          final emailId = emailJson['id'] as String;
+          
+          // Skip if already cached
+          if (existingCacheIds.contains(emailId)) {
+            print('[EmailService] Skipping ${emailId} - already cached');
+            continue;
+          }
+          
+          Email? email;
+          
+          if (emailJson['encryptionMethod'] == 'PQC_2_LAYER') {
+            email = await getPqc2Email(emailId);
+          } else if (emailJson['encryptionMethod'] == 'PQC_3_LAYER') {
+            email = await getPqc3Email(emailId);
+          } else {
+            email = Email.fromJson(emailJson);
           }
 
-          return emails;
-        } else {
-          print('[EmailService] API returned success=false');
+          if (email != null) {
+            emails.add(email);
+            
+            // Cache the fresh email (only if no attachments and not already cached)
+            if (email.attachments.isEmpty) {
+              // Double-check: only cache if not already cached
+              final isAlreadyCached = await isEmailCached(email.id, userEmail);
+              if (!isAlreadyCached) {
+                _cacheDecryptedEmail(email, userEmail); // Don't await - cache asynchronously
+              } else {
+                print('[EmailService] Email ${email.id} already cached, skipping');
+              }
+            } else {
+              print('[EmailService] Email ${email.id} has attachments, not caching');
+            }
+          }
         }
-      } else {
-        print('[EmailService] API returned error status: ${response.statusCode}');
-        print('[EmailService] Error body: ${response.body}');
       }
-      return [];
+
+      // Sort emails by date (newest first)
+      emails.sort((a, b) => b.sentAt.compareTo(a.sentAt));
+      
+      print('[EmailService] Inbox loaded: ${emails.length} emails');
+      return emails;
     } catch (e) {
       print('[EmailService] Exception in getInbox: $e');
+      // Return cached emails as fallback
+      final cachedEmails = await _dbHelper.getCachedInboxEmails(userEmail);
+      return _convertCachedToEmails(cachedEmails);
+    }
+  }
+
+  /// Convert cached emails to Email objects
+  List<Email> _convertCachedToEmails(List<CachedInboxEmail> cachedEmails) {
+    return cachedEmails.map((cached) => Email(
+      id: cached.id,
+      senderEmail: cached.senderEmail,
+      recipientEmail: cached.recipientEmail,
+      subject: cached.subject,
+      body: cached.body,
+      attachments: <EmailAttachment>[],
+      sentAt: cached.receivedAt,
+      isRead: true,
+      encryptionMethod: cached.encryptionMethod,
+    )).toList();
+  }
+
+  /// Cache a decrypted email for future fast loading
+  Future<void> _cacheDecryptedEmail(Email email, String userEmail) async {
+    try {
+      // Check if email is already cached to avoid duplicates
+      final existingCached = await _dbHelper.getCachedInboxEmail(email.id);
+      if (existingCached != null) {
+        print('[EmailService] Email ${email.id} already exists in cache, skipping duplicate');
+        return;
+      }
+      
+      print('[EmailService] Caching email ${email.id} with ${email.attachments.length} attachments');
+      
+      // Don't cache emails with attachments at all to prevent corruption
+      if (email.attachments.isNotEmpty) {
+        print('[EmailService] ⚠️  Email has attachments, not caching to prevent corruption');
+        return;
+      }
+      
+      // No attachments since we only cache emails without attachments
+      
+      final cachedEmail = CachedInboxEmail(
+        id: email.id,
+        subject: email.subject,
+        body: email.body,
+        senderEmail: email.senderEmail,
+        recipientEmail: userEmail,
+        receivedAt: email.sentAt,
+        encryptionMethod: email.encryptionMethod,
+        attachments: null, // No attachments for cached emails
+        isDecrypted: true,
+        isCached: true, // Always true since we only cache emails without attachments
+        cachedAt: DateTime.now(),
+      );
+
+      await _dbHelper.cacheInboxEmail(cachedEmail);
+      print('[EmailService] Cached decrypted email: ${email.id}');
+    } catch (e, stackTrace) {
+      print('[EmailService] Error caching email: $e');
+      print('[EmailService] Stack trace: $stackTrace');
+      // Don't throw - caching failure shouldn't break inbox loading
+    }
+  }
+
+  /// Parse attachments from JSON string
+  List<EmailAttachment> _parseAttachmentsFromJson(String attachmentsJson) {
+    try {
+      print('[EmailService] Parsing attachments JSON: ${attachmentsJson.length} chars');
+      print('[EmailService] JSON preview: ${attachmentsJson.substring(0, attachmentsJson.length > 200 ? 200 : attachmentsJson.length)}');
+      
+      final List<dynamic> attachmentsList = jsonDecode(attachmentsJson);
+      print('[EmailService] Parsed ${attachmentsList.length} attachments from JSON');
+      
+      final attachments = <EmailAttachment>[];
+      for (int i = 0; i < attachmentsList.length; i++) {
+        final attachmentMap = attachmentsList[i] as Map<String, dynamic>;
+        print('[EmailService] Attachment $i: fileName=${attachmentMap['fileName']}, contentType=${attachmentMap['contentType']}, contentBase64 length=${attachmentMap['contentBase64']?.toString().length ?? 0}');
+        
+        final attachment = EmailAttachment.fromMap(attachmentMap);
+        attachments.add(attachment);
+      }
+      
+      return attachments;
+    } catch (e, stackTrace) {
+      print('[EmailService] Error parsing attachments JSON: $e');
+      print('[EmailService] Stack trace: $stackTrace');
+      return [];
+    }
+  }
+
+  /// Clear cache for a user (call when new emails arrive)
+  Future<void> clearInboxCache(String userEmail) async {
+    try {
+      await _dbHelper.clearCachedInboxEmails(userEmail);
+      print('[EmailService] Cleared inbox cache for: $userEmail');
+    } catch (e) {
+      print('[EmailService] Error clearing inbox cache: $e');
+    }
+  }
+
+  /// Force refresh inbox (clear cache and fetch from backend)
+  Future<List<Email>> refreshInbox(String userEmail) async {
+    print('[EmailService] Force refreshing inbox for: $userEmail');
+    await clearInboxCache(userEmail);
+    return await getInbox(userEmail);
+  }
+
+  /// Check if an email is cached (and safe to use)
+  Future<bool> isEmailCached(String emailId, String userEmail) async {
+    try {
+      final cachedEmail = await _dbHelper.getCachedInboxEmail(emailId);
+      if (cachedEmail == null) {
+        return false; // Not in cache at all
+      }
+      
+      // Check if email exists in cache AND is marked as cached (isCached = 1)
+      // This prevents re-caching emails that were stored but marked as not cached (due to attachments)
+      return cachedEmail.isCached;
+    } catch (e) {
+      print('[EmailService] Error checking if email is cached: $e');
+      return false;
+    }
+  }
+
+  /// Get cache statistics for debugging
+  Future<Map<String, int>> getCacheStats(String userEmail) async {
+    try {
+      final allCached = await _dbHelper.getAllCachedInboxEmails(userEmail);
+      final withoutAttachments = allCached.where((e) => e.attachments == null || e.attachments!.isEmpty).length;
+      final withAttachments = allCached.length - withoutAttachments;
+      
+      return {
+        'total': allCached.length,
+        'without_attachments': withoutAttachments,
+        'with_attachments': withAttachments,
+      };
+    } catch (e) {
+      print('[EmailService] Error getting cache stats: $e');
+      return {'total': 0, 'without_attachments': 0, 'with_attachments': 0};
+    }
+  }
+
+  /// Get cached emails directly for fast loading
+  Future<List<CachedInboxEmail>> getCachedEmails(String userEmail) async {
+    try {
+      return await _dbHelper.getCachedInboxEmails(userEmail);
+    } catch (e) {
+      print('[EmailService] Error getting cached emails: $e');
       return [];
     }
   }
 
   Future<List<Email>> getSentEmails(String userEmail) async {
     try {
-      print('[EmailService] ===== FETCHING SENT EMAILS =====');
+      print('[EmailService] ===== FETCHING SENT EMAILS WITH CACHING =====');
       print('[EmailService] User email: $userEmail');
 
+      // Step 1: Try to load from local database first (for PQC emails)
+      print('[EmailService] Step 1: Loading PQC emails from local database...');
+      final localPqcEmails = await _dbHelper.getAllSentPqcEmails();
+      print('[EmailService] Found ${localPqcEmails.length} PQC emails in local database');
+
+      // Step 2: Fetch from backend for non-PQC emails and to get metadata
+      print('[EmailService] Step 2: Fetching from backend...');
       final response = await http.get(
         Uri.parse('$_baseUrl/email/sent/$userEmail'),
         headers: {'Content-Type': 'application/json'},
@@ -1042,25 +1280,32 @@ class EmailService {
           print('[EmailService] Backend returned ${emailsJson.length} emails');
           final emails = <Email>[];
 
+          // Create a map of local PQC emails for fast lookup
+          final localPqcMap = <String, SentPqcEmail>{};
+          for (final localEmail in localPqcEmails) {
+            localPqcMap[localEmail.id] = localEmail;
+          }
+
           for (int i = 0; i < emailsJson.length; i++) {
             final emailJson = emailsJson[i];
             print('[EmailService] ----- Processing email $i -----');
             print('[EmailService] Email ID: ${emailJson['id']}');
             print('[EmailService] Encryption method: ${emailJson['encryptionMethod']}');
-            print('[EmailService] Subject preview: ${(emailJson['subject'] as String).substring(0, (emailJson['subject'] as String).length > 100 ? 100 : (emailJson['subject'] as String).length)}');
-            print('[EmailService] Body preview: ${(emailJson['body'] as String).substring(0, (emailJson['body'] as String).length > 100 ? 100 : (emailJson['body'] as String).length)}');
 
             final email = Email.fromJson(emailJson);
 
             // For NEW PQC emails (both 2-layer and 3-layer), load plaintext from local database
             if (email.encryptionMethod == 'PQC_2_LAYER' || email.encryptionMethod == 'PQC_3_LAYER') {
               print('[EmailService] This is a ${email.encryptionMethod} email, loading from local database...');
-              final localEmail = await getSentPqcEmail(email.id);
+              
+              // Use the pre-loaded local emails map for faster lookup
+              final localEmail = localPqcMap[email.id];
               if (localEmail != null) {
                 print('[EmailService] ✅ Found in local database!');
                 print('[EmailService] Local subject: ${localEmail.subject}');
                 print('[EmailService] Local body: ${localEmail.body}');
                 print('[EmailService] Local attachments: ${localEmail.attachments.length}');
+                
                 // Replace encrypted data with plaintext from local database
                 email.subject = localEmail.subject;
                 email.body = localEmail.body;
@@ -1082,8 +1327,6 @@ class EmailService {
             }
 
             emails.add(email);
-            print('[EmailService] Final subject for display: ${email.subject.substring(0, email.subject.length > 50 ? 50 : email.subject.length)}');
-            print('[EmailService] Final body for display: ${email.body.substring(0, email.body.length > 50 ? 50 : email.body.length)}');
           }
 
           print('[EmailService] ===== SENT EMAILS FETCH COMPLETE: ${emails.length} emails =====');
@@ -1163,6 +1406,46 @@ class EmailAttachment {
     contentType: json['contentType'] as String,
     contentBase64: json['contentBase64'] as String,
   );
+
+  /// Convert to Map for database storage
+  Map<String, dynamic> toMap() {
+    // Validate base64 data before storing
+    if (contentBase64.isEmpty) {
+      throw ArgumentError('Attachment contentBase64 cannot be empty for file: $fileName');
+    }
+    
+    // Try to validate base64 format
+    try {
+      base64Decode(contentBase64);
+    } catch (e) {
+      print('[EmailAttachment] Warning: Invalid base64 data for file $fileName: $e');
+      // Don't throw here, just log the warning
+    }
+    
+    return {
+      'fileName': fileName,
+      'contentType': contentType,
+      'contentBase64': contentBase64,
+    };
+  }
+
+  /// Create from Map (database retrieval)
+  factory EmailAttachment.fromMap(Map<String, dynamic> map) {
+    final fileName = map['fileName'] as String? ?? '';
+    final contentType = map['contentType'] as String? ?? '';
+    final contentBase64 = map['contentBase64'] as String? ?? '';
+    
+    // Validate the data
+    if (fileName.isEmpty || contentType.isEmpty || contentBase64.isEmpty) {
+      throw ArgumentError('Invalid attachment data: fileName=$fileName, contentType=$contentType, contentBase64 length=${contentBase64.length}');
+    }
+    
+    return EmailAttachment(
+      fileName: fileName,
+      contentType: contentType,
+      contentBase64: contentBase64,
+    );
+  }
 }
 
 class SendAttachment {
