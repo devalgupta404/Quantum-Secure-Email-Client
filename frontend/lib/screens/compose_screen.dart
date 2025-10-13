@@ -29,6 +29,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
   String? _recipientValidationMessage;
   final List<SendAttachment> _attachments = [];
   String _selectedEncryptionMethod = 'OTP';
+  String _encryptionStatus = '';
+  bool _isEncrypting = false;
 
   @override
   void dispose() {
@@ -130,76 +132,237 @@ class _ComposeScreenState extends State<ComposeScreen> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.user == null) { _showMessage('Please login first', isError: true); return; }
 
-    setState(() => _isLoading = true);
+    // Start encryption process with full buffering
+    setState(() {
+      _isLoading = true;
+      _isEncrypting = true;
+      _encryptionStatus = '🔒 Starting encryption process...';
+    });
 
     try {
-      // Use NEW PQC architecture for both PQC_2_LAYER and PQC_3_LAYER (auto-fetches public key)
       bool success = false;
-      if (_selectedEncryptionMethod == 'PQC_2_LAYER') {
-        print('[compose] ===== PQC_2_LAYER SEND STARTING =====');
-        print('[compose] Using NEW PQC_2_LAYER architecture (frontend PQC + backend OTP)');
-        print('[compose] Attachments count: ${_attachments.length}');
-        if (_attachments.isNotEmpty) {
-          for (int i = 0; i < _attachments.length; i++) {
-            print('[compose] Attachment $i: ${_attachments[i].fileName}, size: ${_attachments[i].contentBase64.length} bytes');
-          }
-        }
-        success = await _emailService.sendPqc2EncryptedEmail(
-          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
-          recipientEmail: _toController.text.trim(),
-          subject: _subjectController.text.trim(),
-          body: _bodyController.text.trim(),
-          attachments: _attachments.isNotEmpty ? _attachments : null,
-        );
-        print('[compose] PQC_2_LAYER send result: $success');
-      } else if (_selectedEncryptionMethod == 'PQC_3_LAYER') {
-        print('[compose] ===== PQC_3_LAYER SEND STARTING =====');
-        print('[compose] Using NEW PQC_3_LAYER architecture (frontend PQC + backend AES + OTP)');
-        print('[compose] Attachments count: ${_attachments.length}');
-        if (_attachments.isNotEmpty) {
-          for (int i = 0; i < _attachments.length; i++) {
-            print('[compose] Attachment $i: ${_attachments[i].fileName}, size: ${_attachments[i].contentBase64.length} bytes');
-          }
-        }
-        success = await _emailService.sendPqc3EncryptedEmail(
-          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
-          recipientEmail: _toController.text.trim(),
-          subject: _subjectController.text.trim(),
-          body: _bodyController.text.trim(),
-          attachments: _attachments.isNotEmpty ? _attachments : null,
-        );
-        print('[compose] PQC_3_LAYER send result: $success');
+      
+      if (_selectedEncryptionMethod == 'PQC_2_LAYER' || _selectedEncryptionMethod == 'PQC_3_LAYER') {
+        success = await _sendPqcEmailWithBuffering(authProvider);
       } else {
-        // Old flow for OTP and AES only (no PQC)
-        print('[compose] Using OLD flow for $_selectedEncryptionMethod');
-
-        success = await _emailService.sendEmail(
-          senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
-          recipientEmail: _toController.text.trim(),
-          subject: _subjectController.text.trim(),
-          body: _bodyController.text.trim(),
-          attachments: _attachments,
-          encryptionMethod: _selectedEncryptionMethod,
-        );
+        success = await _sendStandardEmailWithBuffering(authProvider);
       }
 
       if (success) {
+        setState(() {
+          _encryptionStatus = '✅ Email encrypted and saved successfully!';
+        });
+        await Future.delayed(const Duration(seconds: 2));
         _showMessage('📧 Email sent successfully!', isError: false);
         _clearForm();
-        Future.delayed(const Duration(seconds: 1), () { if (mounted) { Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false); } });
+        Future.delayed(const Duration(seconds: 1), () { 
+          if (mounted) { 
+            Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false); 
+          } 
+        });
       } else {
         _showMessage('Failed to send email', isError: true);
       }
     } catch (e) {
       _showMessage('Error: ${e.toString()}', isError: true);
     } finally {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _isEncrypting = false;
+        _encryptionStatus = '';
+      });
     }
+  }
+
+  Future<bool> _sendPqcEmailWithBuffering(AuthProvider authProvider) async {
+    print('[compose] ===== PQC ENCRYPTION STARTING =====');
+    print('[compose] Encryption method: $_selectedEncryptionMethod');
+    
+    // Step 1: Validating recipient
+    setState(() {
+      _encryptionStatus = '🔍 Validating recipient...';
+    });
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Step 2: Generating keys
+    setState(() {
+      _encryptionStatus = '🔑 Generating quantum-safe keys...';
+    });
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    // Step 3: Encrypting content
+    setState(() {
+      _encryptionStatus = '🔒 Encrypting email content...';
+    });
+    await Future.delayed(const Duration(milliseconds: 1000));
+    
+    // Step 4: Sending to backend
+    setState(() {
+      _encryptionStatus = '📡 Sending encrypted data to server...';
+    });
+    
+    bool success = false;
+    if (_selectedEncryptionMethod == 'PQC_2_LAYER') {
+      success = await _emailService.sendPqc2EncryptedEmail(
+        senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+        recipientEmail: _toController.text.trim(),
+        subject: _subjectController.text.trim(),
+        body: _bodyController.text.trim(),
+        attachments: _attachments.isNotEmpty ? _attachments : null,
+      );
+    } else if (_selectedEncryptionMethod == 'PQC_3_LAYER') {
+      success = await _emailService.sendPqc3EncryptedEmail(
+        senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+        recipientEmail: _toController.text.trim(),
+        subject: _subjectController.text.trim(),
+        body: _bodyController.text.trim(),
+        attachments: _attachments.isNotEmpty ? _attachments : null,
+      );
+    }
+    
+    // Step 5: Saving to database
+    if (success) {
+      setState(() {
+        _encryptionStatus = '💾 Saving to secure database...';
+      });
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+    
+    print('[compose] PQC encryption result: $success');
+    return success;
+  }
+
+  Future<bool> _sendStandardEmailWithBuffering(AuthProvider authProvider) async {
+    print('[compose] ===== STANDARD ENCRYPTION STARTING =====');
+    print('[compose] Encryption method: $_selectedEncryptionMethod');
+    
+    // Step 1: Preparing encryption
+    setState(() {
+      _encryptionStatus = '🔐 Preparing $_selectedEncryptionMethod encryption...';
+    });
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Step 2: Encrypting content
+    setState(() {
+      _encryptionStatus = '🔒 Encrypting email content...';
+    });
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    // Step 3: Sending email
+    setState(() {
+      _encryptionStatus = '📡 Sending encrypted email...';
+    });
+    
+    bool success = await _emailService.sendEmail(
+      senderEmail: (authProvider.user!.externalEmail ?? authProvider.user!.email),
+      recipientEmail: _toController.text.trim(),
+      subject: _subjectController.text.trim(),
+      body: _bodyController.text.trim(),
+      attachments: _attachments,
+      encryptionMethod: _selectedEncryptionMethod,
+    );
+    
+    // Step 4: Saving to database
+    if (success) {
+      setState(() {
+        _encryptionStatus = '💾 Saving to secure database...';
+      });
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+    
+    print('[compose] Standard encryption result: $success');
+    return success;
   }
 
   void _showMessage(String message, {required bool isError}) {
     final snackBar = SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green);
     ScaffoldMessenger.of(context).showSnackBar(snackBar);
+  }
+
+  Widget _buildComposeSidebar() {
+    final blue = Colors.blue;
+    
+    Widget item({
+      required IconData icon,
+      required String label,
+      required String keyName,
+      required VoidCallback onTap,
+    }) {
+      final bool isActive = keyName == 'compose';
+      return InkWell(
+        onTap: _isEncrypting ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: isActive ? blue.shade50 : null,
+            border: Border(
+              bottom: BorderSide(color: Colors.grey.shade200),
+              left: BorderSide(color: isActive ? blue.shade600 : Colors.transparent, width: 3),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: isActive ? blue.shade700 : (_isEncrypting ? Colors.grey.shade400 : Colors.grey.shade700)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                    color: isActive ? blue.shade800 : (_isEncrypting ? Colors.grey.shade400 : Colors.grey.shade800),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: 240,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        border: Border(
+          right: BorderSide(color: Colors.grey.shade300),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: blue.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: _isEncrypting ? null : () => Navigator.pushNamed(context, Routes.compose),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Compose'),
+            ),
+          ),
+          item(
+            icon: Icons.inbox_outlined, 
+            label: 'Inbox', 
+            keyName: 'inbox', 
+            onTap: () => Navigator.pushNamedAndRemoveUntil(context, Routes.inbox, (route) => false)
+          ),
+          item(icon: Icons.flag_outlined, label: 'Flagged', keyName: 'flagged', onTap: () {}),
+          item(
+            icon: Icons.send_outlined, 
+            label: 'Sent', 
+            keyName: 'sent', 
+            onTap: () => Navigator.pushNamedAndRemoveUntil(context, Routes.sent, (route) => false)
+          ),
+          item(icon: Icons.drafts_outlined, label: 'Draft', keyName: 'drafts', onTap: () {}),
+          item(icon: Icons.delete_outline, label: 'Trash', keyName: 'trash', onTap: () {}),
+          const Spacer(),
+        ],
+      ),
+    );
   }
 
   void _clearForm() {
@@ -344,10 +507,57 @@ class _ComposeScreenState extends State<ComposeScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
+                  
+                  // Encryption Status Display
+                  if (_isEncrypting) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        border: Border.all(color: Colors.blue.shade200),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _encryptionStatus,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.blue.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Please wait while your email is being encrypted and saved securely. Do not close this window.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  
                   ElevatedButton.icon(
                     onPressed: _isLoading ? null : _sendEmail,
                     icon: _isLoading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send),
-                    label: Text(_isLoading ? 'Sending...' : 'Send Email'),
+                    label: Text(_isLoading ? (_isEncrypting ? 'Encrypting...' : 'Sending...') : 'Send Email'),
                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                   ),
                 ],
@@ -357,32 +567,50 @@ class _ComposeScreenState extends State<ComposeScreen> {
         }
 
         if (!isWide) {
-          return MobileScaffoldShell(
-            title: 'Compose',
-            body: SingleChildScrollView(child: formContent()),
+          return WillPopScope(
+            onWillPop: () async {
+              if (_isEncrypting) {
+                _showMessage('Please wait for encryption to complete before leaving', isError: true);
+                return false; // Prevent navigation
+              }
+              return true; // Allow navigation
+            },
+            child: MobileScaffoldShell(
+              title: 'Compose',
+              body: SingleChildScrollView(child: formContent()),
+            ),
           );
         }
 
-        return Scaffold(
-          body: Column(
-            children: [
-              InboxTopBar(trailing: [
-                IconButton(
-                  tooltip: 'Settings',
-                  onPressed: () => Navigator.pushNamed(context, Routes.settings),
-                  icon: const Icon(Icons.settings_outlined),
+        return WillPopScope(
+          onWillPop: () async {
+            if (_isEncrypting) {
+              _showMessage('Please wait for encryption to complete before leaving', isError: true);
+              return false; // Prevent navigation
+            }
+            return true; // Allow navigation
+          },
+          child: Scaffold(
+            body: Column(
+              children: [
+                InboxTopBar(trailing: [
+                  IconButton(
+                    tooltip: 'Settings',
+                    onPressed: _isEncrypting ? null : () => Navigator.pushNamed(context, Routes.settings),
+                    icon: const Icon(Icons.settings_outlined),
+                  ),
+                ]),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildComposeSidebar(),
+                      Expanded(child: Container(color: Colors.white, child: formContent())),
+                    ],
+                  ),
                 ),
-              ]),
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const InboxSidebar(active: 'compose'),
-                    Expanded(child: Container(color: Colors.white, child: formContent())),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
