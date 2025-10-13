@@ -16,6 +16,10 @@ public class SecureKeyManager : IQuantumKeyManager
     private readonly Dictionary<string, QuantumKey> _secureKeys = new();
     private readonly Dictionary<string, KeyExchange> _keyExchanges = new();
 
+    // FIXED: Added thread-safety locks to prevent race conditions
+    private readonly object _secureKeysLock = new object();
+    private readonly object _keyExchangesLock = new object();
+
     public SecureKeyManager(ILogger<SecureKeyManager> logger)
     {
         _logger = logger;
@@ -29,16 +33,20 @@ public class SecureKeyManager : IQuantumKeyManager
         // 3. Verify key hasn't expired
         // 4. Log key access for audit
 
-        if (!_secureKeys.TryGetValue(keyId, out var key))
+        // FIXED: Thread-safe key generation and retrieval
+        lock (_secureKeysLock)
         {
-            // Generate a new secure key
-            key = await GenerateSecureKeyAsync(keyId, requiredBytes);
-            _secureKeys[keyId] = key;
-            
-            _logger.LogInformation("Generated new secure key for KeyId: {KeyId}", keyId);
-        }
+            if (!_secureKeys.TryGetValue(keyId, out var key))
+            {
+                // Generate a new secure key (synchronously inside lock)
+                key = GenerateSecureKeyAsync(keyId, requiredBytes).GetAwaiter().GetResult();
+                _secureKeys[keyId] = key;
 
-        return key;
+                _logger.LogInformation("Generated new secure key for KeyId: {KeyId}", keyId);
+            }
+
+            return key;
+        }
     }
 
     public async Task MarkKeyAsUsedAsync(string keyId, int bytesUsed)
@@ -92,49 +100,57 @@ public class SecureKeyManager : IQuantumKeyManager
     /// </summary>
     public async Task<KeyExchangeResponse> RespondToKeyExchangeAsync(string keyId, string recipientPublicKey, bool accept)
     {
-        if (!_keyExchanges.TryGetValue(keyId, out var keyExchange))
+        // FIXED: Thread-safe key exchange operations
+        lock (_keyExchangesLock)
         {
-            throw new ArgumentException($"Key exchange {keyId} not found");
-        }
-
-        if (keyExchange.Status != KeyExchangeStatus.Pending)
-        {
-            throw new InvalidOperationException($"Key exchange {keyId} is no longer pending");
-        }
-
-        if (DateTime.UtcNow > keyExchange.ExpiresAt)
-        {
-            keyExchange.Status = KeyExchangeStatus.Expired;
-            throw new InvalidOperationException($"Key exchange {keyId} has expired");
-        }
-
-        keyExchange.Status = accept ? KeyExchangeStatus.Accepted : KeyExchangeStatus.Rejected;
-
-        var response = new KeyExchangeResponse
-        {
-            KeyId = keyId,
-            RecipientPublicKey = recipientPublicKey,
-            Status = keyExchange.Status,
-            Message = accept ? "Key exchange accepted" : "Key exchange rejected"
-        };
-
-        if (accept)
-        {
-            // Generate shared secret key (simplified)
-            var sharedKey = await GenerateSharedKeyAsync(keyExchange.PublicKey, recipientPublicKey);
-            var quantumKey = new QuantumKey
+            if (!_keyExchanges.TryGetValue(keyId, out var keyExchange))
             {
-                Id = keyId,
-                Data = sharedKey,
-                Size = sharedKey.Length
+                throw new ArgumentException($"Key exchange {keyId} not found");
+            }
+
+            if (keyExchange.Status != KeyExchangeStatus.Pending)
+            {
+                throw new InvalidOperationException($"Key exchange {keyId} is no longer pending");
+            }
+
+            if (DateTime.UtcNow > keyExchange.ExpiresAt)
+            {
+                keyExchange.Status = KeyExchangeStatus.Expired;
+                throw new InvalidOperationException($"Key exchange {keyId} has expired");
+            }
+
+            keyExchange.Status = accept ? KeyExchangeStatus.Accepted : KeyExchangeStatus.Rejected;
+
+            var response = new KeyExchangeResponse
+            {
+                KeyId = keyId,
+                RecipientPublicKey = recipientPublicKey,
+                Status = keyExchange.Status,
+                Message = accept ? "Key exchange accepted" : "Key exchange rejected"
             };
-            _secureKeys[keyId] = quantumKey;
 
-            _logger.LogInformation("Key exchange completed successfully: {KeyId}", keyId);
+            if (accept)
+            {
+                // Generate shared secret key (simplified)
+                var sharedKey = GenerateSharedKeyAsync(keyExchange.PublicKey, recipientPublicKey).GetAwaiter().GetResult();
+
+                // FIXED: Use lock when updating _secureKeys
+                lock (_secureKeysLock)
+                {
+                    var quantumKey = new QuantumKey
+                    {
+                        Id = keyId,
+                        Data = sharedKey,
+                        Size = sharedKey.Length
+                    };
+                    _secureKeys[keyId] = quantumKey;
+                }
+
+                _logger.LogInformation("Key exchange completed successfully: {KeyId}", keyId);
+            }
+
+            return response;
         }
-
-        await Task.CompletedTask;
-        return response;
     }
 
     private async Task<QuantumKey> GenerateSecureKeyAsync(string keyId, int requiredBytes)

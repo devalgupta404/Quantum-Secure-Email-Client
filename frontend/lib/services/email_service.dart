@@ -657,17 +657,18 @@ class EmailService {
         }
         print('[sendEmail][PQC_3_LAYER] Using recipient public key: ${actualRecipientPublicKey.substring(0, 50)}...');
         print('[sendEmail][PQC_3_LAYER] My private key: ${EmailService.pqcPrivateKey?.substring(0, 50) ?? 'null'}...');
-        // Enhanced PQC (Kyber512 + AES layer true for PQC_3_LAYER)
+        // Enhanced PQC (Kyber1024 + AES layer true for PQC_3_LAYER)
+        // FIXED: Changed from Kyber512 to Kyber1024 to match backend expectations
         final encReqSubject = {
           'plaintext': subject,
           'recipientPublicKey': actualRecipientPublicKey,
-          'securityLevel': 'Kyber512',
+          'securityLevel': 'Kyber1024',
           'useAES': true,
         };
         final encReqBody = {
           'plaintext': body,
           'recipientPublicKey': actualRecipientPublicKey,
-          'securityLevel': 'Kyber512',
+          'securityLevel': 'Kyber1024',
           'useAES': true,
         };
 

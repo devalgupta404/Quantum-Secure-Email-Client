@@ -120,7 +120,10 @@ public class Level3HybridEncryption
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to encrypt with hybrid encryption", ex);
+            // FIXED: Add detailed logging before throwing exception
+            Console.WriteLine($"[Level3HybridEncryption] EXCEPTION in EncryptAsync: {ex.Message}");
+            Console.WriteLine($"[Level3HybridEncryption] Stack trace: {ex.StackTrace}");
+            throw new InvalidOperationException($"Failed to encrypt with hybrid encryption: {ex.Message}", ex);
         }
     }
 
@@ -185,7 +188,10 @@ public class Level3HybridEncryption
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to decrypt hybrid encrypted email", ex);
+            // FIXED: Add detailed logging before throwing exception
+            Console.WriteLine($"[Level3HybridEncryption] EXCEPTION in DecryptAsync: {ex.Message}");
+            Console.WriteLine($"[Level3HybridEncryption] Stack trace: {ex.StackTrace}");
+            throw new InvalidOperationException($"Failed to decrypt hybrid encrypted email: {ex.Message}", ex);
         }
     }
 

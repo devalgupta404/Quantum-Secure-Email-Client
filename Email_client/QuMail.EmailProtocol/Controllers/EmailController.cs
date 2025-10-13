@@ -844,18 +844,17 @@ public class EmailController : ControllerBase
 
             if (!subjectDecryptionFailed && TryParseAESEnvelope(aesSubject, out var aesSubjectEnvelope))
             {
-                var aesSubjectResult = await DecryptAESAsync(aesSubjectEnvelope);
-                // Check if AES decryption failed
-                if (aesSubjectResult.StartsWith("AES decryption failed"))
+                try
                 {
-                    _logger.LogWarning("AES decryption failed for subject, using fallback message");
+                    // DecryptAESAsync and RestorePqcEnvelopeFromAES now throw exceptions on failure
+                    var aesSubjectResult = await DecryptAESAsync(aesSubjectEnvelope);
+                    pqcSubject = RestorePqcEnvelopeFromAES(aesSubjectResult);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "AES decryption or envelope restoration failed for subject, using fallback message");
                     pqcSubject = "[Decryption Failed - AES decryption error]";
                     subjectDecryptionFailed = true;
-                }
-                else
-                {
-                    // Restore the PQC JSON envelope from AES decryption result
-                    pqcSubject = RestorePqcEnvelopeFromAES(aesSubjectResult);
                 }
             }
             else
@@ -869,18 +868,17 @@ public class EmailController : ControllerBase
 
             if (!bodyDecryptionFailed && TryParseAESEnvelope(aesBody, out var aesBodyEnvelope))
             {
-                var aesBodyResult = await DecryptAESAsync(aesBodyEnvelope);
-                // Check if AES decryption failed
-                if (aesBodyResult.StartsWith("AES decryption failed"))
+                try
                 {
-                    _logger.LogWarning("AES decryption failed for body, using fallback message");
+                    // DecryptAESAsync and RestorePqcEnvelopeFromAES now throw exceptions on failure
+                    var aesBodyResult = await DecryptAESAsync(aesBodyEnvelope);
+                    pqcBody = RestorePqcEnvelopeFromAES(aesBodyResult);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "AES decryption or envelope restoration failed for body, using fallback message");
                     pqcBody = "[Decryption Failed - AES decryption error. The encryption key for this message is no longer available.]";
                     bodyDecryptionFailed = true;
-                }
-                else
-                {
-                    // Restore the PQC JSON envelope from AES decryption result
-                    pqcBody = RestorePqcEnvelopeFromAES(aesBodyResult);
                 }
             }
             else
@@ -931,16 +929,11 @@ public class EmailController : ControllerBase
                                         // Then decrypt AES layer to get PQC envelope
                                         if (TryParseAESEnvelope(aesEnvelope, out var aesEnvelopeObj))
                                         {
+                                            // DecryptAESAsync now throws exceptions on failure (no need for string check)
                                             var aesDecryptedResult = await DecryptAESAsync(aesEnvelopeObj);
 
-                                            // Check if AES decryption failed
-                                            if (aesDecryptedResult.StartsWith("AES decryption failed"))
-                                            {
-                                                _logger.LogWarning("AES decryption failed for attachment {Index}: {FileName}, skipping", idx, fileName);
-                                                continue;
-                                            }
-
                                             // Restore the PQC JSON envelope from AES decryption result
+                                            // RestorePqcEnvelopeFromAES now throws exceptions on failure
                                             var pqcEnvelope = RestorePqcEnvelopeFromAES(aesDecryptedResult);
 
                                             decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
@@ -1390,14 +1383,19 @@ public class EmailController : ControllerBase
             _logger.LogError("AES decrypt error content length: {Length}", errorContent?.Length ?? 0);
             _logger.LogError("AES decrypt error content preview: {Preview}", errorContent?.Length > 500 ? errorContent.Substring(0, 500) + "..." : errorContent);
             _logger.LogInformation("=== AES DECRYPT END (FAILED) ===");
-            return $"AES decryption failed: {response.StatusCode} - {errorContent}";
+            throw new InvalidOperationException($"AES decryption failed: HTTP {response.StatusCode}. The AES service may be unavailable or the encryption key may be invalid.");
+        }
+        catch (InvalidOperationException)
+        {
+            // Re-throw our own exceptions
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "AES decryption failed with exception: {Message}", ex.Message);
             _logger.LogError("Exception stack trace: {StackTrace}", ex.StackTrace);
             _logger.LogInformation("=== AES DECRYPT END (EXCEPTION) ===");
-            return $"AES decryption failed: {ex.Message}";
+            throw new InvalidOperationException($"AES decryption failed: {ex.Message}", ex);
         }
     }
 
@@ -1941,18 +1939,18 @@ public class EmailController : ControllerBase
         }
         catch (FormatException ex)
         {
-            _logger.LogError(ex, "Invalid base64 format in AES decryption result, using original");
-            return aesDecryptedResult;
+            _logger.LogError(ex, "Invalid base64 format in AES decryption result - data is corrupted");
+            throw new InvalidOperationException("Failed to restore PQC envelope: AES decryption result is not valid base64. The data may be corrupted or the AES service returned an error.", ex);
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Invalid JSON after base64 decode, using original");
-            return aesDecryptedResult;
+            _logger.LogError(ex, "Invalid JSON structure after base64 decode - PQC envelope is malformed");
+            throw new InvalidOperationException("Failed to restore PQC envelope: Invalid JSON structure after base64 decode. The encrypted data may be corrupted.", ex);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to restore PQC envelope from AES, using original: {Error}", ex.Message);
-            return aesDecryptedResult; // Fallback to original if conversion fails
+            _logger.LogError(ex, "Unexpected error restoring PQC envelope from AES: {Error}", ex.Message);
+            throw new InvalidOperationException($"Failed to restore PQC envelope from AES: {ex.Message}", ex);
         }
     }
 
