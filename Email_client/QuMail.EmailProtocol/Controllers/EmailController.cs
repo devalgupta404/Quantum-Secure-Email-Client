@@ -152,10 +152,8 @@ public class EmailController : ControllerBase
                 var encrypted = new List<object>(request.Attachments.Count);
                 foreach (var a in request.Attachments)
                 {
-                    // Step 1: Encrypt with PQC
-                    var bytes = Convert.FromBase64String(a.ContentBase64);
-                    var contentText = Convert.ToBase64String(bytes);
-                    var pqcEnvelope = await EncryptSingleWithPQC2LayerAsync(contentText, recipient.PqcPublicKey);
+                    // Step 1: Encrypt with PQC (ContentBase64 is already base64, use directly!)
+                    var pqcEnvelope = await EncryptSingleWithPQC2LayerAsync(a.ContentBase64, recipient.PqcPublicKey);
 
                     // Step 2: Wrap PQC envelope with OTP (NEW architecture)
                     var finalEnvelope = await EncryptBodyAsync(pqcEnvelope);
@@ -256,10 +254,8 @@ public class EmailController : ControllerBase
                 var encrypted = new List<object>(request.Attachments.Count);
                 foreach (var a in request.Attachments)
                 {
-                    // Step 1: Encrypt with PQC
-                    var bytes = Convert.FromBase64String(a.ContentBase64);
-                    var contentText = Convert.ToBase64String(bytes);
-                    var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(contentText, recipient.PqcPublicKey);
+                    // Step 1: Encrypt with PQC (ContentBase64 is already base64, use directly!)
+                    var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipient.PqcPublicKey);
 
                     // Step 2: Wrap PQC envelope with AES (NEW architecture)
                     var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelope);
@@ -1682,13 +1678,12 @@ public class EmailController : ControllerBase
     private async Task<string?> EncryptAttachmentsOTPAsync(List<SendAttachment>? attachments)
     {
         if (attachments == null || attachments.Count == 0) return null;
-        
+
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            var bytes = Convert.FromBase64String(a.ContentBase64);
-            var contentText = Convert.ToBase64String(bytes);
-            var envelope = await EncryptBodyAsync(contentText);
+            // ContentBase64 is already base64, use directly!
+            var envelope = await EncryptBodyAsync(a.ContentBase64);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
         return JsonSerializer.Serialize(encrypted, _jsonOptions);
@@ -1697,13 +1692,12 @@ public class EmailController : ControllerBase
     private async Task<string?> EncryptAttachmentsPQC2LayerAsync(List<SendAttachment>? attachments, string recipientPublicKey)
     {
         if (attachments == null || attachments.Count == 0) return null;
-        
+
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            var bytes = Convert.FromBase64String(a.ContentBase64);
-            var contentText = Convert.ToBase64String(bytes);
-            var envelope = await EncryptSingleWithPQC2LayerAsync(contentText, recipientPublicKey);
+            // ContentBase64 is already base64, use directly!
+            var envelope = await EncryptSingleWithPQC2LayerAsync(a.ContentBase64, recipientPublicKey);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
         return JsonSerializer.Serialize(encrypted, _jsonOptions);
@@ -1712,13 +1706,12 @@ public class EmailController : ControllerBase
     private async Task<string?> EncryptAttachmentsPQC3LayerAsync(List<SendAttachment>? attachments, string recipientPublicKey)
     {
         if (attachments == null || attachments.Count == 0) return null;
-        
+
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            var bytes = Convert.FromBase64String(a.ContentBase64);
-            var contentText = Convert.ToBase64String(bytes);
-            var envelope = await EncryptSingleWithPQC3LayerAsync(contentText, recipientPublicKey);
+            // ContentBase64 is already base64, use directly!
+            var envelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
         return JsonSerializer.Serialize(encrypted, _jsonOptions);
@@ -1727,11 +1720,11 @@ public class EmailController : ControllerBase
     private async Task<EncryptionResult> EncryptWithAESAsync(string subject, string body, List<SendAttachment>? attachments)
     {
         _logger.LogInformation("Encrypting with AES-GCM via server2.py");
-        
+
         // Encrypt subject and body with AES
         var subjectEnvelope = await EncryptWithAESGCMAsync(subject);
         var bodyEnvelope = await EncryptWithAESGCMAsync(body);
-        
+
         // Encrypt attachments
         string? attachmentsJson = null;
         if (attachments != null && attachments.Count > 0)
@@ -1739,14 +1732,13 @@ public class EmailController : ControllerBase
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                var bytes = Convert.FromBase64String(a.ContentBase64);
-                var contentText = Convert.ToBase64String(bytes);
-                var envelope = await EncryptWithAESGCMAsync(contentText);
+                // ContentBase64 is already base64, use directly!
+                var envelope = await EncryptWithAESGCMAsync(a.ContentBase64);
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
             }
             attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
         }
-        
+
         return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
     }
 
@@ -1765,9 +1757,8 @@ public class EmailController : ControllerBase
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                var bytes = Convert.FromBase64String(a.ContentBase64);
-                var contentText = Convert.ToBase64String(bytes);
-                var envelope = await EncryptSingleWithPQC2LayerAsync(contentText, recipientPublicKey);
+                // ContentBase64 is already base64, use directly!
+                var envelope = await EncryptSingleWithPQC2LayerAsync(a.ContentBase64, recipientPublicKey);
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
             }
             attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
@@ -1791,14 +1782,13 @@ public class EmailController : ControllerBase
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                var bytes = Convert.FromBase64String(a.ContentBase64);
-                var contentText = Convert.ToBase64String(bytes);
-                var envelope = await EncryptSingleWithPQC3LayerAsync(contentText, recipientPublicKey);
+                // ContentBase64 is already base64, use directly!
+                var envelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
             }
             attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
         }
-        
+
         return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
     }
 
