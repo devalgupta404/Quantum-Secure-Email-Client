@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:email_validator/email_validator.dart';
 import '../providers/auth_provider.dart';
 import 'login_screen.dart';
+import '../widgets/mini_splash_widget.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -376,8 +377,25 @@ class _SignupScreenState extends State<SignupScreen> {
       );
 
       if (success && mounted) {
-        // Navigate to login screen after successful registration
-        Navigator.pushReplacementNamed(context, '/login');
+        // Show mini splash screen before navigating to login
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => MiniSplashWidget(
+              message: 'Account created successfully!',
+              duration: const Duration(milliseconds: 1500),
+              onComplete: () {
+                Navigator.of(context).pushReplacementNamed('/login');
+              },
+            ),
+            transitionDuration: const Duration(milliseconds: 300),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: child,
+              );
+            },
+          ),
+        );
       }
     }
   }

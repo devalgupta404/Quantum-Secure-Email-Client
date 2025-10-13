@@ -34,6 +34,8 @@ class _InboxScreenState extends State<InboxScreen> {
     _loadEmails();
   }
 
+  bool _isInitialLoad = true;
+
 
   Future<void> _loadEmails() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -44,41 +46,94 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
-
     try {
+      // Load emails directly without showing cached emails first
+      // This prevents the confusing "old emails then refresh" behavior
       final emails = await _emailService.getInbox(authProvider.user!.email);
-      // ignore: avoid_print
-      print('[inbox] loaded emails count=${emails.length}');
-      
-      // Log each email's raw data before decryption
-      for (int i = 0; i < emails.length; i++) {
-        final email = emails[i];
-        print('[inbox] Email $i raw data: ID=${email.id}, Subject="${email.subject}", Body="${email.body}", Method=${email.encryptionMethod}');
-        print('[inbox] Email $i Subject length: ${email.subject.length}, Body length: ${email.body.length}');
-        print('[inbox] Email $i Attachments count: ${email.attachments.length}');
-        for (int j = 0; j < email.attachments.length; j++) {
-          final att = email.attachments[j];
-          print('[inbox] Email $i Attachment $j: ${att.fileName}, contentType: ${att.contentType}, base64 length: ${att.contentBase64.length}');
-          print('[inbox] Email $i Attachment $j base64 preview: ${att.contentBase64.substring(0, att.contentBase64.length > 100 ? 100 : att.contentBase64.length)}');
-        }
-      }
-      
-      // Backend now handles all decryption automatically
-      print('[inbox] Backend has already decrypted all emails');
+      print('[inbox] Loaded ${emails.length} emails');
       
       if (mounted) {
-        setState(() => _emails = emails);
+        setState(() {
+          _emails = emails;
+          _isInitialLoad = false; // Mark initial load as complete
+        });
+        
+        // Check for corrupted attachments after loading
+        Future.delayed(const Duration(milliseconds: 500), () {
+          _checkAndFixCorruptedAttachments();
+        });
       }
     } catch (e) {
       print('Error loading emails: $e');
-    } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isInitialLoad = false; // Mark load as complete even on error
+        });
       }
-      if (_useMockInbox && mounted && _emails.isEmpty) {
-        _seedMockEmails();
+    }
+    
+    if (_useMockInbox && mounted && _emails.isEmpty) {
+      _seedMockEmails();
+    }
+  }
+
+  /// Force refresh - clears cache and fetches fresh data
+  Future<void> _forceRefresh() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.user == null) return;
+
+    try {
+      // Clear cache and fetch fresh data
+      final emails = await _emailService.refreshInbox(authProvider.user!.email);
+      if (mounted) {
+        setState(() {
+          _emails = emails;
+          _isInitialLoad = false; // Mark as no longer initial load
+        });
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Inbox refreshed successfully!'),
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
+    } catch (e) {
+      print('Error force refreshing emails: $e');
+      if (mounted) {
+        setState(() {
+          _isInitialLoad = false; // Mark as no longer initial load even on error
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing inbox: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Check if any emails have corrupted attachments and refresh if needed
+  Future<void> _checkAndFixCorruptedAttachments() async {
+    bool hasCorruptedAttachments = false;
+    
+    for (final email in _emails) {
+      for (final attachment in email.attachments) {
+        final decoded = _decodeBase64MaybeUrl(attachment.contentBase64);
+        if (decoded == null) {
+          print('[inbox] Found corrupted attachment: ${attachment.fileName} in email ${email.id}');
+          hasCorruptedAttachments = true;
+          break;
+        }
+      }
+      if (hasCorruptedAttachments) break;
+    }
+    
+    if (hasCorruptedAttachments) {
+      print('[inbox] Detected corrupted attachments, clearing cache and refreshing...');
+      await _forceRefresh();
     }
   }
 
@@ -435,6 +490,12 @@ class _InboxScreenState extends State<InboxScreen> {
     print('[_decodeBase64MaybeUrl] Input length: ${input.length}');
     print('[_decodeBase64MaybeUrl] Input preview: ${input.substring(0, input.length > 50 ? 50 : input.length)}');
 
+    // Check if input is null or empty
+    if (input.isEmpty) {
+      print('[_decodeBase64MaybeUrl] ❌ Input is empty');
+      return null;
+    }
+
     // Use Base64Utils for consistent decoding
     print('[_decodeBase64MaybeUrl] Debug info: ${Base64Utils.getDebugInfo(input)}');
 
@@ -445,7 +506,22 @@ class _InboxScreenState extends State<InboxScreen> {
       return result;
     } catch (e) {
       print('[_decodeBase64MaybeUrl] ❌ Decode failed: $e');
-      return null;
+      
+      // Try alternative decoding methods
+      try {
+        print('[_decodeBase64MaybeUrl] Trying alternative base64 decode...');
+        var s = input.trim();
+        final dataUrlIdx = s.indexOf('base64,');
+        if (dataUrlIdx != -1) {
+          s = s.substring(dataUrlIdx + 7);
+        }
+        final result = Uint8List.fromList(base64Decode(s));
+        print('[_decodeBase64MaybeUrl] ✅ Alternative decode succeeded, ${result.length} bytes');
+        return result;
+      } catch (e2) {
+        print('[_decodeBase64MaybeUrl] ❌ Alternative decode also failed: $e2');
+        return null;
+      }
     }
   }
 
@@ -523,8 +599,8 @@ class _InboxScreenState extends State<InboxScreen> {
                 ),
                 const SizedBox(width: 16),
                 IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: _loadEmails,
+                  tooltip: 'Refresh (clears cache)',
+                  onPressed: _forceRefresh,
                   icon: Icon(Icons.refresh, color: blue.shade700),
                 ),
                 IconButton(
@@ -615,9 +691,35 @@ class _InboxScreenState extends State<InboxScreen> {
         }
 
         Widget buildEmailList() {
-          if (_isLoading) {
-            return const Center(child: CircularProgressIndicator());
+          // Show loading indicator only during initial load when no emails are present
+          if (_isInitialLoad && _emails.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Loading your emails...',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            );
           }
+          
           if (_emails.isEmpty) {
             return Center(
               child: Padding(
@@ -659,7 +761,7 @@ class _InboxScreenState extends State<InboxScreen> {
           }
 
           return RefreshIndicator(
-            onRefresh: _loadEmails,
+            onRefresh: _forceRefresh,
             child: ListView.builder(
               itemCount: _emails.length,
               itemBuilder: (context, index) {

@@ -9,6 +9,7 @@ import '../widgets/inbox_shell.dart';
 import '../services/email_service.dart';
 import '../providers/auth_provider.dart';
 import '../utils/base64_utils.dart';
+import '../widgets/mini_splash_widget.dart';
 
 class ComposeScreen extends StatefulWidget {
   const ComposeScreen({super.key});
@@ -154,10 +155,38 @@ class _ComposeScreenState extends State<ComposeScreen> {
         });
         await Future.delayed(const Duration(seconds: 2));
         _showMessage('📧 Email sent successfully!', isError: false);
+        
+        // Clear inbox cache since a new email was sent (recipient might have new email)
+        try {
+          await _emailService.clearInboxCache(_toController.text.trim());
+          print('[compose] Cleared inbox cache for recipient: ${_toController.text.trim()}');
+        } catch (e) {
+          print('[compose] Error clearing inbox cache: $e');
+          // Don't fail the send operation if cache clearing fails
+        }
+        
         _clearForm();
         Future.delayed(const Duration(seconds: 1), () { 
           if (mounted) { 
-            Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false); 
+            // Show mini splash screen before navigating to sent
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => MiniSplashWidget(
+                  message: 'Email sent successfully!',
+                  duration: const Duration(milliseconds: 1200),
+                  onComplete: () {
+                    Navigator.of(context).pushNamedAndRemoveUntil(Routes.sent, (route) => false);
+                  },
+                ),
+                transitionDuration: const Duration(milliseconds: 300),
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: child,
+                  );
+                },
+              ),
+            );
           } 
         });
       } else {

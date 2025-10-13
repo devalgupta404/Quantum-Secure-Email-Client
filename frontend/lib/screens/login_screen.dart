@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:email_validator/email_validator.dart';
 import '../providers/auth_provider.dart';
 import 'signup_screen.dart';
+import '../widgets/mini_splash_widget.dart';
+import '../app.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -138,8 +140,25 @@ class _LoginScreenState extends State<LoginScreen> {
       final success = await authProvider.login(_emailController.text.trim(), _passwordController.text);
       
       if (success && mounted) {
-        // Navigate to inbox after successful login
-        Navigator.pushReplacementNamed(context, '/inbox');
+        // Show mini splash screen before navigating to inbox
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => MiniSplashWidget(
+              message: 'Welcome back!',
+              duration: const Duration(milliseconds: 1500),
+              onComplete: () {
+                Navigator.of(context).pushReplacementNamed(Routes.inbox);
+              },
+            ),
+            transitionDuration: const Duration(milliseconds: 300),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: child,
+              );
+            },
+          ),
+        );
       }
     }
   }

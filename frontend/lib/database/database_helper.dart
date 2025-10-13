@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/sent_pqc_email.dart';
+import '../models/cached_inbox_email.dart';
 
 /// Local SQLite database helper for storing sent PQC emails
 /// PQC private keys never leave the device, so we need local storage for sent messages
@@ -28,7 +29,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2, // Bumped to 2 to add attachments column
+      version: 4, // Bumped to 4 to add isCached field
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -51,14 +52,47 @@ class DatabaseHelper {
       )
     ''');
 
-    // Index for faster queries by sender
+    // Cached inbox emails table (NEW)
+    await db.execute('''
+      CREATE TABLE cached_inbox_emails (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        senderEmail TEXT NOT NULL,
+        recipientEmail TEXT NOT NULL,
+        receivedAt TEXT NOT NULL,
+        encryptionMethod TEXT NOT NULL,
+        attachments TEXT,
+        isDecrypted INTEGER DEFAULT 0,
+        isCached INTEGER DEFAULT 1,
+        cachedAt TEXT NOT NULL,
+        lastAccessed TEXT
+      )
+    ''');
+
+    // Index for faster queries by sender (sent emails)
     await db.execute('''
       CREATE INDEX idx_sender_email ON sent_pqc_emails(senderEmail)
     ''');
 
-    // Index for faster queries by date
+    // Index for faster queries by date (sent emails)
     await db.execute('''
       CREATE INDEX idx_sent_at ON sent_pqc_emails(sentAt DESC)
+    ''');
+
+    // Index for faster queries by recipient (inbox emails)
+    await db.execute('''
+      CREATE INDEX idx_inbox_recipient ON cached_inbox_emails(recipientEmail)
+    ''');
+
+    // Index for faster queries by date (inbox emails)
+    await db.execute('''
+      CREATE INDEX idx_inbox_received_at ON cached_inbox_emails(receivedAt DESC)
+    ''');
+
+    // Index for decryption status (inbox emails)
+    await db.execute('''
+      CREATE INDEX idx_inbox_decrypted ON cached_inbox_emails(isDecrypted)
     ''');
 
     print('[DatabaseHelper] Database tables created successfully');
@@ -72,6 +106,40 @@ class DatabaseHelper {
     if (oldVersion < 2) {
       print('[DatabaseHelper] Adding attachments column to sent_pqc_emails table');
       await db.execute('ALTER TABLE sent_pqc_emails ADD COLUMN attachments TEXT');
+    }
+
+    // Add inbox caching table for version 3
+    if (oldVersion < 3) {
+      print('[DatabaseHelper] Adding cached_inbox_emails table');
+      await db.execute('''
+        CREATE TABLE cached_inbox_emails (
+          id TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          body TEXT NOT NULL,
+          senderEmail TEXT NOT NULL,
+          recipientEmail TEXT NOT NULL,
+          receivedAt TEXT NOT NULL,
+          encryptionMethod TEXT NOT NULL,
+          attachments TEXT,
+          isDecrypted INTEGER DEFAULT 0,
+          cachedAt TEXT NOT NULL,
+          lastAccessed TEXT
+        )
+      ''');
+
+      // Add indexes for inbox emails
+      await db.execute('CREATE INDEX idx_inbox_recipient ON cached_inbox_emails(recipientEmail)');
+      await db.execute('CREATE INDEX idx_inbox_received_at ON cached_inbox_emails(receivedAt DESC)');
+      await db.execute('CREATE INDEX idx_inbox_decrypted ON cached_inbox_emails(isDecrypted)');
+    }
+
+    // Add isCached field for version 4
+    if (oldVersion < 4) {
+      print('[DatabaseHelper] Adding isCached field to cached_inbox_emails table');
+      await db.execute('ALTER TABLE cached_inbox_emails ADD COLUMN isCached INTEGER DEFAULT 1');
+      
+      // Update existing records to be marked as cached
+      await db.execute('UPDATE cached_inbox_emails SET isCached = 1 WHERE isCached IS NULL');
     }
   }
 
@@ -276,5 +344,260 @@ class DatabaseHelper {
     await databaseFactory.deleteDatabase(path);
     _database = null;
     print('[DatabaseHelper] Database deleted');
+  }
+
+  // ===== INBOX CACHING FUNCTIONS =====
+
+  /// Cache decrypted inbox email for faster loading
+  Future<int> cacheInboxEmail(CachedInboxEmail email) async {
+    try {
+      // Check if email already exists to avoid unnecessary operations
+      final existing = await getCachedInboxEmail(email.id);
+      if (existing != null) {
+        print('[DatabaseHelper] Email ${email.id} already cached, updating instead');
+        // Update existing record instead of inserting
+        final db = await database;
+        final result = await db.update(
+          'cached_inbox_emails',
+          email.toMap(),
+          where: 'id = ?',
+          whereArgs: [email.id],
+        );
+        print('[DatabaseHelper] ✅ Updated cached inbox email: ${email.id}');
+        return result;
+      }
+      
+      print('[DatabaseHelper] Caching inbox email: ${email.id}');
+      final db = await database;
+      final result = await db.insert(
+        'cached_inbox_emails',
+        email.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      print('[DatabaseHelper] ✅ Cached inbox email: ${email.id}');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] ❌ Error caching inbox email: $e');
+      rethrow;
+    }
+  }
+
+  /// Get cached inbox email by ID
+  Future<CachedInboxEmail?> getCachedInboxEmail(String id) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'cached_inbox_emails',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+
+      if (maps.isEmpty) {
+        print('[DatabaseHelper] Cached inbox email not found: $id');
+        return null;
+      }
+
+      final email = CachedInboxEmail.fromMap(maps.first);
+      
+      // Update last accessed time
+      await updateLastAccessed(id);
+      
+      return email;
+    } catch (e) {
+      print('[DatabaseHelper] Error getting cached inbox email: $e');
+      return null;
+    }
+  }
+
+  /// Get all cached inbox emails for a recipient (including non-cached ones)
+  Future<List<CachedInboxEmail>> getAllCachedInboxEmails(String recipientEmail) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'cached_inbox_emails',
+        where: 'recipientEmail = ?',
+        whereArgs: [recipientEmail],
+        orderBy: 'receivedAt DESC',
+      );
+
+      final emails = maps.map((map) => CachedInboxEmail.fromMap(map)).toList();
+      print('[DatabaseHelper] Found ${emails.length} total cached inbox emails for $recipientEmail');
+      return emails;
+    } catch (e) {
+      print('[DatabaseHelper] Error getting all cached inbox emails: $e');
+      return [];
+    }
+  }
+
+  /// Get only decrypted cached emails for faster loading
+  Future<List<CachedInboxEmail>> getDecryptedCachedInboxEmails(String recipientEmail) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'cached_inbox_emails',
+        where: 'recipientEmail = ? AND isDecrypted = 1',
+        whereArgs: [recipientEmail],
+        orderBy: 'receivedAt DESC',
+      );
+
+      final emails = maps.map((map) => CachedInboxEmail.fromMap(map)).toList();
+      print('[DatabaseHelper] Found ${emails.length} decrypted cached inbox emails for $recipientEmail');
+      return emails;
+    } catch (e) {
+      print('[DatabaseHelper] Error getting decrypted cached inbox emails: $e');
+      return [];
+    }
+  }
+
+  /// Get only cached emails (isCached = 1) for faster loading
+  Future<List<CachedInboxEmail>> getCachedInboxEmails(String recipientEmail) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'cached_inbox_emails',
+        where: 'recipientEmail = ? AND isCached = 1',
+        whereArgs: [recipientEmail],
+        orderBy: 'receivedAt DESC',
+      );
+
+      final emails = maps.map((map) => CachedInboxEmail.fromMap(map)).toList();
+      print('[DatabaseHelper] Found ${emails.length} cached inbox emails for $recipientEmail');
+      return emails;
+    } catch (e) {
+      print('[DatabaseHelper] Error getting cached inbox emails: $e');
+      return [];
+    }
+  }
+
+  /// Update email as decrypted
+  Future<int> markEmailAsDecrypted(String id) async {
+    try {
+      final db = await database;
+      final result = await db.update(
+        'cached_inbox_emails',
+        {
+          'isDecrypted': 1,
+          'lastAccessed': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('[DatabaseHelper] Marked email as decrypted: $id');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error marking email as decrypted: $e');
+      return 0;
+    }
+  }
+
+  /// Mark email as not cached (isCached = 0)
+  Future<int> markEmailAsNotCached(String id) async {
+    try {
+      final db = await database;
+      final result = await db.update(
+        'cached_inbox_emails',
+        {
+          'isCached': 0,
+          'lastAccessed': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('[DatabaseHelper] Marked email as not cached: $id');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error marking email as not cached: $e');
+      return 0;
+    }
+  }
+
+  /// Update last accessed time
+  Future<int> updateLastAccessed(String id) async {
+    try {
+      final db = await database;
+      final result = await db.update(
+        'cached_inbox_emails',
+        {'lastAccessed': DateTime.now().toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error updating last accessed: $e');
+      return 0;
+    }
+  }
+
+  /// Delete cached inbox email
+  Future<int> deleteCachedInboxEmail(String id) async {
+    try {
+      final db = await database;
+      final result = await db.delete(
+        'cached_inbox_emails',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('[DatabaseHelper] Deleted cached inbox email: $id');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error deleting cached inbox email: $e');
+      return 0;
+    }
+  }
+
+  /// Clear all cached inbox emails for a user
+  Future<int> clearCachedInboxEmails(String recipientEmail) async {
+    try {
+      final db = await database;
+      final result = await db.delete(
+        'cached_inbox_emails',
+        where: 'recipientEmail = ?',
+        whereArgs: [recipientEmail],
+      );
+      print('[DatabaseHelper] Cleared all cached inbox emails for: $recipientEmail');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error clearing cached inbox emails: $e');
+      return 0;
+    }
+  }
+
+  /// Clean old cached emails (older than 30 days)
+  Future<int> cleanOldCachedEmails() async {
+    try {
+      final db = await database;
+      final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
+      final result = await db.delete(
+        'cached_inbox_emails',
+        where: 'cachedAt < ?',
+        whereArgs: [thirtyDaysAgo.toIso8601String()],
+      );
+      print('[DatabaseHelper] Cleaned $result old cached emails');
+      return result;
+    } catch (e) {
+      print('[DatabaseHelper] Error cleaning old cached emails: $e');
+      return 0;
+    }
+  }
+
+  /// Get count of cached emails
+  Future<int> getCachedEmailCount(String? recipientEmail) async {
+    try {
+      final db = await database;
+      final result = await db.rawQuery(
+        recipientEmail != null
+            ? 'SELECT COUNT(*) as count FROM cached_inbox_emails WHERE recipientEmail = ?'
+            : 'SELECT COUNT(*) as count FROM cached_inbox_emails',
+        recipientEmail != null ? [recipientEmail] : null,
+      );
+
+      final count = Sqflite.firstIntValue(result) ?? 0;
+      print('[DatabaseHelper] Cached email count: $count');
+      return count;
+    } catch (e) {
+      print('[DatabaseHelper] Error getting cached email count: $e');
+      return 0;
+    }
   }
 }
