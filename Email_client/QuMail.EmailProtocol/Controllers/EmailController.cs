@@ -238,8 +238,13 @@ public class EmailController : ControllerBase
 
             // PHASE 2: Apply AES encryption to PQC-encrypted data
             _logger.LogInformation("Applying AES encryption to PQC data");
-            var aesSubject = await EncryptWithAESGCMAsync(request.PqcEncryptedSubject);
-            var aesBody = await EncryptWithAESGCMAsync(request.PqcEncryptedBody);
+            
+            // Prepare PQC JSON envelopes for AES encryption (base64 encode to preserve structure)
+            var pqcSubjectForAES = PreparePqcEnvelopeForAES(request.PqcEncryptedSubject);
+            var pqcBodyForAES = PreparePqcEnvelopeForAES(request.PqcEncryptedBody);
+            
+            var aesSubject = await EncryptWithAESGCMAsync(pqcSubjectForAES);
+            var aesBody = await EncryptWithAESGCMAsync(pqcBodyForAES);
 
             // PHASE 3: Apply OTP encryption to AES-encrypted data
             _logger.LogInformation("Applying OTP encryption to AES data");
@@ -257,10 +262,13 @@ public class EmailController : ControllerBase
                     // Step 1: Encrypt with PQC (ContentBase64 is already base64, use directly!)
                     var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipient.PqcPublicKey);
 
-                    // Step 2: Wrap PQC envelope with AES (NEW architecture)
-                    var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelope);
+                    // Step 2: Prepare PQC JSON envelope for AES encryption (base64 encode to preserve structure)
+                    var pqcEnvelopeForAES = PreparePqcEnvelopeForAES(pqcEnvelope);
 
-                    // Step 3: Wrap AES envelope with OTP (NEW architecture)
+                    // Step 3: Wrap PQC envelope with AES (NEW architecture)
+                    var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelopeForAES);
+
+                    // Step 4: Wrap AES envelope with OTP (NEW architecture)
                     var finalEnvelope = await EncryptBodyAsync(aesEnvelope);
                     encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope = finalEnvelope });
                 }
@@ -816,13 +824,18 @@ public class EmailController : ControllerBase
 
             if (!subjectDecryptionFailed && TryParseAESEnvelope(aesSubject, out var aesSubjectEnvelope))
             {
-                pqcSubject = await DecryptAESAsync(aesSubjectEnvelope);
+                var aesSubjectResult = await DecryptAESAsync(aesSubjectEnvelope);
                 // Check if AES decryption failed
-                if (pqcSubject.StartsWith("AES decryption failed"))
+                if (aesSubjectResult.StartsWith("AES decryption failed"))
                 {
                     _logger.LogWarning("AES decryption failed for subject, using fallback message");
                     pqcSubject = "[Decryption Failed - AES decryption error]";
                     subjectDecryptionFailed = true;
+                }
+                else
+                {
+                    // Restore the PQC JSON envelope from AES decryption result
+                    pqcSubject = RestorePqcEnvelopeFromAES(aesSubjectResult);
                 }
             }
             else
@@ -836,13 +849,18 @@ public class EmailController : ControllerBase
 
             if (!bodyDecryptionFailed && TryParseAESEnvelope(aesBody, out var aesBodyEnvelope))
             {
-                pqcBody = await DecryptAESAsync(aesBodyEnvelope);
+                var aesBodyResult = await DecryptAESAsync(aesBodyEnvelope);
                 // Check if AES decryption failed
-                if (pqcBody.StartsWith("AES decryption failed"))
+                if (aesBodyResult.StartsWith("AES decryption failed"))
                 {
                     _logger.LogWarning("AES decryption failed for body, using fallback message");
                     pqcBody = "[Decryption Failed - AES decryption error. The encryption key for this message is no longer available.]";
                     bodyDecryptionFailed = true;
+                }
+                else
+                {
+                    // Restore the PQC JSON envelope from AES decryption result
+                    pqcBody = RestorePqcEnvelopeFromAES(aesBodyResult);
                 }
             }
             else
@@ -893,14 +911,17 @@ public class EmailController : ControllerBase
                                         // Then decrypt AES layer to get PQC envelope
                                         if (TryParseAESEnvelope(aesEnvelope, out var aesEnvelopeObj))
                                         {
-                                            var pqcEnvelope = await DecryptAESAsync(aesEnvelopeObj);
+                                            var aesDecryptedResult = await DecryptAESAsync(aesEnvelopeObj);
 
                                             // Check if AES decryption failed
-                                            if (pqcEnvelope.StartsWith("AES decryption failed"))
+                                            if (aesDecryptedResult.StartsWith("AES decryption failed"))
                                             {
                                                 _logger.LogWarning("AES decryption failed for attachment {Index}: {FileName}, skipping", idx, fileName);
                                                 continue;
                                             }
+
+                                            // Restore the PQC JSON envelope from AES decryption result
+                                            var pqcEnvelope = RestorePqcEnvelopeFromAES(aesDecryptedResult);
 
                                             decryptedAttachments.Add(new { fileName, contentType, pqcEnvelope });
                                             _logger.LogInformation("Successfully decrypted attachment {Index}: {FileName}", idx, fileName);
@@ -1790,6 +1811,102 @@ public class EmailController : ControllerBase
         }
 
         return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
+    }
+
+    /// <summary>
+    /// Prepares PQC JSON envelope for AES encryption by base64 encoding it
+    /// This ensures the full PQC envelope is preserved through AES encryption/decryption
+    /// </summary>
+    /// <param name="pqcJsonEnvelope">PQC JSON envelope containing encrypted data</param>
+    /// <returns>Base64 encoded PQC JSON envelope for AES encryption</returns>
+    private string PreparePqcEnvelopeForAES(string pqcJsonEnvelope)
+    {
+        try
+        {
+            _logger.LogInformation("Preparing PQC JSON envelope for AES encryption");
+            
+            // Validate that the input is a valid JSON envelope
+            if (string.IsNullOrWhiteSpace(pqcJsonEnvelope))
+            {
+                _logger.LogWarning("Empty PQC envelope provided, returning as-is");
+                return pqcJsonEnvelope;
+            }
+            
+            // Quick validation - check if it's valid JSON
+            using var testDoc = JsonDocument.Parse(pqcJsonEnvelope);
+            if (!testDoc.RootElement.TryGetProperty("encryptedBody", out _))
+            {
+                _logger.LogWarning("PQC envelope missing 'encryptedBody' property, returning as-is");
+                return pqcJsonEnvelope;
+            }
+            
+            // Convert the JSON envelope to base64 so it can be safely encrypted with AES
+            // This preserves the entire PQC envelope structure through the AES layer
+            var base64Encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(pqcJsonEnvelope));
+            _logger.LogInformation("Successfully prepared PQC envelope for AES encryption (size: {Size} chars)", base64Encoded.Length);
+            return base64Encoded;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Invalid JSON in PQC envelope, using original");
+            return pqcJsonEnvelope;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to prepare PQC envelope for AES, using original");
+            return pqcJsonEnvelope; // Fallback to original if conversion fails
+        }
+    }
+
+    /// <summary>
+    /// Restores PQC JSON envelope from AES decryption result
+    /// This reverses the base64 encoding applied before AES encryption
+    /// </summary>
+    /// <param name="aesDecryptedResult">Base64 encoded PQC JSON envelope from AES decryption</param>
+    /// <returns>Original PQC JSON envelope</returns>
+    private string RestorePqcEnvelopeFromAES(string aesDecryptedResult)
+    {
+        try
+        {
+            _logger.LogInformation("Restoring PQC JSON envelope from AES decryption result");
+            
+            // Validate input
+            if (string.IsNullOrWhiteSpace(aesDecryptedResult))
+            {
+                _logger.LogWarning("Empty AES decryption result provided, returning as-is");
+                return aesDecryptedResult;
+            }
+            
+            // Convert base64 back to JSON envelope
+            var jsonBytes = Convert.FromBase64String(aesDecryptedResult);
+            var originalJsonEnvelope = System.Text.Encoding.UTF8.GetString(jsonBytes);
+            
+            // Validate that the result is valid JSON with expected structure
+            using var testDoc = JsonDocument.Parse(originalJsonEnvelope);
+            if (!testDoc.RootElement.TryGetProperty("encryptedBody", out _))
+            {
+                _logger.LogWarning("Restored envelope missing 'encryptedBody' property, using original");
+                return aesDecryptedResult;
+            }
+            
+            _logger.LogInformation("Successfully restored PQC envelope from AES decryption (size: {Size} chars)", originalJsonEnvelope.Length);
+            return originalJsonEnvelope;
+        }
+        catch (FormatException ex)
+        {
+            _logger.LogError(ex, "Invalid base64 format in AES decryption result, using original");
+            return aesDecryptedResult;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Invalid JSON after base64 decode, using original");
+            return aesDecryptedResult;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to restore PQC envelope from AES, using original: {Error}", ex.Message);
+            return aesDecryptedResult; // Fallback to original if conversion fails
+        }
     }
 
     private async Task<string> EncryptWithAESGCMAsync(string plaintext)
