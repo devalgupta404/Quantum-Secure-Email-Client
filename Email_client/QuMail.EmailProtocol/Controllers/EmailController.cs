@@ -1791,26 +1791,53 @@ public class EmailController : ControllerBase
     private async Task<EncryptionResult> EncryptWithPQC3LayerAsync(string subject, string body, string recipientPublicKey, List<SendAttachment>? attachments)
     {
         _logger.LogInformation("Encrypting with PQC 3-layer (Kyber-1024 + AES-256 + OTP)");
-        
-        // Encrypt subject and body with PQC 3-layer
-        var subjectEnvelope = await EncryptSingleWithPQC3LayerAsync(subject, recipientPublicKey);
-        var bodyEnvelope = await EncryptSingleWithPQC3LayerAsync(body, recipientPublicKey);
-        
-        // Encrypt attachments
+
+        // PHASE 1: Encrypt with PQC (Kyber-1024)
+        _logger.LogInformation("Phase 1: PQC encryption");
+        var pqcSubject = await EncryptSingleWithPQC3LayerAsync(subject, recipientPublicKey);
+        var pqcBody = await EncryptSingleWithPQC3LayerAsync(body, recipientPublicKey);
+
+        // PHASE 2: Prepare PQC JSON envelopes for AES encryption (base64 encode to preserve structure)
+        _logger.LogInformation("Phase 2: Preparing PQC envelopes for AES encryption");
+        var pqcSubjectForAES = PreparePqcEnvelopeForAES(pqcSubject);
+        var pqcBodyForAES = PreparePqcEnvelopeForAES(pqcBody);
+
+        // PHASE 3: Apply AES encryption to prepared PQC data
+        _logger.LogInformation("Phase 3: AES encryption");
+        var aesSubject = await EncryptWithAESGCMAsync(pqcSubjectForAES);
+        var aesBody = await EncryptWithAESGCMAsync(pqcBodyForAES);
+
+        // PHASE 4: Apply OTP encryption to AES-encrypted data
+        _logger.LogInformation("Phase 4: OTP encryption");
+        var finalSubject = await EncryptBodyAsync(aesSubject);
+        var finalBody = await EncryptBodyAsync(aesBody);
+
+        // Encrypt attachments with all 3 layers
         string? attachmentsJson = null;
         if (attachments != null && attachments.Count > 0)
         {
+            _logger.LogInformation("Encrypting {Count} attachments with PQC 3-layer", attachments.Count);
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                // ContentBase64 is already base64, use directly!
-                var envelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
-                encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
+                // Phase 1: PQC encryption (ContentBase64 is already base64, use directly!)
+                var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
+
+                // Phase 2: Prepare PQC envelope for AES encryption (base64 encode to preserve structure)
+                var pqcEnvelopeForAES = PreparePqcEnvelopeForAES(pqcEnvelope);
+
+                // Phase 3: AES encryption
+                var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelopeForAES);
+
+                // Phase 4: OTP encryption
+                var finalEnvelope = await EncryptBodyAsync(aesEnvelope);
+
+                encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope = finalEnvelope });
             }
             attachmentsJson = JsonSerializer.Serialize(encrypted, _jsonOptions);
         }
 
-        return new EncryptionResult { SubjectEnvelope = subjectEnvelope, BodyEnvelope = bodyEnvelope, AttachmentsJson = attachmentsJson };
+        return new EncryptionResult { SubjectEnvelope = finalSubject, BodyEnvelope = finalBody, AttachmentsJson = attachmentsJson };
     }
 
     /// <summary>
