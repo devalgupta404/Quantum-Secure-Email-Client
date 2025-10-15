@@ -180,97 +180,60 @@ class _SignupScreenState extends State<SignupScreen> {
               validator: (v) => v == null || v.isEmpty ? 'Please select your provider' : null,
             ),
             const SizedBox(height: 12),
+            // App Password Instructions
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                border: Border.all(color: Colors.blue[200]!),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.blue[700], size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        'App Password Required',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue[700],
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Your email provider requires a 16-character app password for secure access.\n\nHow to generate:',
+                    style: TextStyle(color: Colors.blue[600], fontSize: 12),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '• Gmail: Google Account → Security → App passwords\n• Yahoo: Account Security → Generate app password\n• Outlook: Security → Advanced security options',
+                    style: TextStyle(color: Colors.blue[600], fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _appPasswordController,
               decoration: const InputDecoration(
-                labelText: 'App Password (exactly 16 chars)',
+                labelText: 'App Password (exactly 16 characters)',
                 prefixIcon: Icon(Icons.key_outlined),
                 border: OutlineInputBorder(),
+                helperText: 'Enter the 16-character app password from your email provider',
               ),
               maxLength: 16,
               obscureText: true,
               validator: (value) {
-                if (value == null || value.isEmpty) return 'Please enter your 16-char app password';
+                if (value == null || value.isEmpty) return 'Please enter your 16-character app password';
                 var cleanValue = value.replaceAll(' ', '');
                 if (cleanValue.length != 16) {
                   return 'App password must be exactly 16 characters (excluding spaces)';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _nameController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Full Name',
-                prefixIcon: Icon(Icons.person_outlined),
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter your full name';
-                }
-                if (value.length < 2) {
-                  return 'Name must be at least 2 characters';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _passwordController,
-              obscureText: _obscurePassword,
-              decoration: InputDecoration(
-                labelText: 'QuMail Password',
-                prefixIcon: const Icon(Icons.lock_outlined),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscurePassword = !_obscurePassword;
-                    });
-                  },
-                ),
-                border: const OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter a password';
-                }
-                if (value.length < 6) {
-                  return 'Password must be at least 6 characters';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _confirmPasswordController,
-              obscureText: _obscureConfirmPassword,
-              decoration: InputDecoration(
-                labelText: 'Confirm QuMail Password',
-                prefixIcon: const Icon(Icons.lock_outlined),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscureConfirmPassword = !_obscureConfirmPassword;
-                    });
-                  },
-                ),
-                border: const OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please confirm your password';
-                }
-                if (value != _passwordController.text) {
-                  return 'Passwords do not match';
                 }
                 return null;
               },
