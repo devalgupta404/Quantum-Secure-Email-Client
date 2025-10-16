@@ -49,7 +49,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
       _attachments.clear();
       for (final f in result.files) {
         if (f.bytes == null) continue;
-        // Use utility function for consistent base64 encoding
         final b64 = Base64Utils.encode(f.bytes!);
         _attachments.add(SendAttachment(fileName: f.name, contentType: 'application/octet-stream', contentBase64: b64));
       }
@@ -133,7 +132,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.user == null) { _showMessage('Please login first', isError: true); return; }
 
-    // Start encryption process with full buffering
     setState(() {
       _isLoading = true;
       _isEncrypting = true;
@@ -207,25 +205,21 @@ class _ComposeScreenState extends State<ComposeScreen> {
     print('[compose] ===== PQC ENCRYPTION STARTING =====');
     print('[compose] Encryption method: $_selectedEncryptionMethod');
     
-    // Step 1: Validating recipient
     setState(() {
       _encryptionStatus = '🔍 Validating recipient...';
     });
     await Future.delayed(const Duration(milliseconds: 500));
     
-    // Step 2: Generating keys
     setState(() {
       _encryptionStatus = '🔑 Generating quantum-safe keys...';
     });
     await Future.delayed(const Duration(milliseconds: 800));
     
-    // Step 3: Encrypting content
     setState(() {
       _encryptionStatus = '🔒 Encrypting email content...';
     });
     await Future.delayed(const Duration(milliseconds: 1000));
     
-    // Step 4: Sending to backend
     setState(() {
       _encryptionStatus = '📡 Sending encrypted data to server...';
     });
@@ -249,7 +243,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
       );
     }
     
-    // Step 5: Saving to database
     if (success) {
       setState(() {
         _encryptionStatus = '💾 Saving to secure database...';
@@ -265,19 +258,16 @@ class _ComposeScreenState extends State<ComposeScreen> {
     print('[compose] ===== STANDARD ENCRYPTION STARTING =====');
     print('[compose] Encryption method: $_selectedEncryptionMethod');
     
-    // Step 1: Preparing encryption
     setState(() {
       _encryptionStatus = '🔐 Preparing $_selectedEncryptionMethod encryption...';
     });
     await Future.delayed(const Duration(milliseconds: 500));
     
-    // Step 2: Encrypting content
     setState(() {
       _encryptionStatus = '🔒 Encrypting email content...';
     });
     await Future.delayed(const Duration(milliseconds: 800));
     
-    // Step 3: Sending email
     setState(() {
       _encryptionStatus = '📡 Sending encrypted email...';
     });
@@ -291,7 +281,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
       encryptionMethod: _selectedEncryptionMethod,
     );
     
-    // Step 4: Saving to database
     if (success) {
       setState(() {
         _encryptionStatus = '💾 Saving to secure database...';
@@ -462,7 +451,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   ),
                   const SizedBox(height: 16),
                   
-                  // Encryption Method Selection
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
@@ -487,7 +475,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
                               setState(() {
                                 _selectedEncryptionMethod = value!;
                               });
-                              // Auto-generate public key for PQC methods
                               if (value!.startsWith('PQC')) {
                                 _generatePublicKey();
                               }

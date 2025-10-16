@@ -7,7 +7,6 @@ import '../models/cached_inbox_email.dart';
 
 class EmailService {
   static const String _baseUrl = 'https://quantum.pointblank.club/api';
-  // PQC key pairs with persistence
   static String? _pqcPrivateKey;
   static String? _pqcPublicKey;
 
@@ -25,7 +24,6 @@ class EmailService {
     return prefs.getString('auth_token');
   }
   
-  // Key persistence methods
   static Future<void> _savePqcKeys(String publicKey, String privateKey) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('pqc_public_key', publicKey);
@@ -65,7 +63,6 @@ class EmailService {
         setPqcPublicKey(publicKey);
         setPqcPrivateKey(privateKey);
         
-        // Save keys persistently
         await _savePqcKeys(publicKey, privateKey);
         print('[EmailService] Generated new PQC key pair - Public: ${publicKey.substring(0, 50)}..., Private: ${privateKey.substring(0, 50)}...');
         return true;
@@ -78,25 +75,21 @@ class EmailService {
     }
   }
   
-  // Initialize PQC keys from backend user account or generate new ones
   static Future<bool> initializePqcKeys() async {
     try {
       print('[EmailService] Initializing PQC keys...');
       
-      // Try to load keys from backend first (user-specific keys)
       final keysLoaded = await _loadPqcKeysFromBackend();
       if (keysLoaded) {
         print('[EmailService] Loaded existing PQC keys from backend');
         return true;
       }
       
-      // If no keys found in backend, generate new ones and save to backend
       print('[EmailService] No existing keys found, generating new PQC key pair');
       final service = EmailService();
       final success = await service.generatePqcKeyPair();
       
       if (success) {
-        // Save the new keys to backend
         print('[EmailService] Saving new PQC keys to backend...');
         await _savePqcKeysToBackend();
       }
@@ -109,7 +102,6 @@ class EmailService {
   }
 
   // Load PQC PUBLIC KEY from backend user account
-  // NOTE: Private keys are NEVER stored on backend, only on device
   static Future<bool> _loadPqcKeysFromBackend() async {
     try {
       final token = await _getToken();
@@ -136,7 +128,6 @@ class EmailService {
 
           if (publicKey != null) {
             _pqcPublicKey = publicKey;
-            // Try to load private key from local storage only
             final localKeys = await _loadPqcKeys();
             if (!localKeys) {
               print('[EmailService] Public key loaded from backend, but no private key in local storage - need to regenerate keypair');
@@ -161,7 +152,6 @@ class EmailService {
   }
 
   // Save PQC PUBLIC KEY ONLY to backend user account
-  // SECURITY: Private keys must NEVER be sent to backend - they stay on device only
   static Future<bool> _savePqcKeysToBackend() async {
     try {
       if (_pqcPublicKey == null) {
@@ -179,7 +169,6 @@ class EmailService {
         },
         body: jsonEncode({
           'publicKey': _pqcPublicKey,
-          // REMOVED: 'privateKey' - private keys never leave the device!
         }),
       );
 
@@ -190,7 +179,6 @@ class EmailService {
     }
   }
 
-  // Clear stored PQC keys (for testing/debugging)
   static Future<void> clearPqcKeys() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('pqc_public_key');
@@ -201,7 +189,6 @@ class EmailService {
   }
 
 
-  // Register my PQC public key with backend so others can fetch it by email
   static Future<bool> registerMyPqcPublicKey(String email, String publicKey) async {
     try {
       final resp = await http.post(
@@ -237,7 +224,6 @@ class EmailService {
     }
   }
 
-  /// Validate recipient and get their PQC public key for new PQC architecture
   Future<Map<String, dynamic>?> validateRecipient(String email) async {
     try {
       final response = await http.post(
@@ -289,7 +275,6 @@ class EmailService {
     }
   }
 
-  /// Decrypt PQC data with private key on frontend (new architecture)
   Future<String?> decryptWithPqcFrontend(String pqcEncryptedData) async {
     try {
       if (_pqcPrivateKey == null) {
@@ -439,7 +424,6 @@ class EmailService {
     try {
       print('[EmailService] Starting NEW PQC_2_LAYER send flow...');
 
-      // Step 1: Validate recipient and get public key
       final recipientData = await validateRecipient(recipientEmail);
       if (recipientData == null || recipientData['exists'] != true) {
         print('[EmailService] Recipient not found or validation failed');
@@ -449,7 +433,6 @@ class EmailService {
       final recipientPublicKey = recipientData['publicKey'] as String;
       print('[EmailService] Recipient validated, public key: ${recipientPublicKey.substring(0, 50)}...');
 
-      // Step 2: Encrypt subject and body with PQC on frontend
       // Use placeholder for empty subject/body to avoid backend validation errors
       final subjectToEncrypt = subject.trim().isEmpty ? "(No Subject)" : subject;
       final bodyToEncrypt = body.trim().isEmpty ? " " : body;
@@ -466,7 +449,6 @@ class EmailService {
 
       print('[EmailService] PQC encryption successful');
 
-      // Step 3: Send PQC-encrypted data to backend (PQC_2_LAYER endpoint)
       final requestBody = {
         'senderEmail': senderEmail,
         'recipientEmail': recipientEmail,
@@ -490,7 +472,6 @@ class EmailService {
           final emailId = data['emailId'] as String;
           print('[EmailService] PQC_2_LAYER email sent successfully, ID: $emailId');
 
-          // Step 4: Save plaintext to local database for sent folder (including attachments)
           await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now(), attachments: attachments);
 
           return true;
@@ -517,7 +498,6 @@ class EmailService {
     try {
       print('[EmailService] Starting NEW PQC_3_LAYER send flow...');
 
-      // Step 1: Validate recipient and get public key
       final recipientData = await validateRecipient(recipientEmail);
       if (recipientData == null || recipientData['exists'] != true) {
         print('[EmailService] Recipient not found or validation failed');
@@ -527,7 +507,6 @@ class EmailService {
       final recipientPublicKey = recipientData['publicKey'] as String;
       print('[EmailService] Recipient validated, public key: ${recipientPublicKey.substring(0, 50)}...');
 
-      // Step 2: Encrypt subject and body with PQC on frontend
       final pqcEncryptedSubject = await encryptWithPqcFrontend(subject, recipientPublicKey);
       final pqcEncryptedBody = await encryptWithPqcFrontend(body, recipientPublicKey);
 
@@ -538,7 +517,6 @@ class EmailService {
 
       print('[EmailService] PQC encryption successful');
 
-      // Step 3: Send PQC-encrypted data to backend (PQC_3_LAYER endpoint)
       final requestBody = {
         'senderEmail': senderEmail,
         'recipientEmail': recipientEmail,
@@ -562,7 +540,6 @@ class EmailService {
           final emailId = data['emailId'] as String;
           print('[EmailService] PQC_3_LAYER email sent successfully, ID: $emailId');
 
-          // Step 4: Save plaintext to local database for sent folder (including attachments)
           await saveSentPqcEmail(emailId, subject, body, recipientEmail, senderEmail, DateTime.now(), attachments: attachments);
 
           return true;
@@ -596,7 +573,6 @@ class EmailService {
       String finalSubject = subject;
       String finalBody = body;
       
-      // Encrypt based on method
       if (encryptionMethod == 'AES') {
         // AES encryption via backend proxy (GET)
         final encSubUri = Uri.parse('$_baseUrl/aes/encrypt?plaintext=${Uri.encodeComponent(subject)}');
@@ -621,7 +597,6 @@ class EmailService {
           throw Exception('AES encryption failed');
         }
       } else       if (encryptionMethod == 'PQC_2_LAYER') {
-        // Require explicit recipient public key to avoid key mismatch
         final actualRecipientPublicKey = recipientPublicKey;
         if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
           throw Exception('Recipient public key is required for PQC');
@@ -650,7 +625,6 @@ class EmailService {
           throw Exception('PQC encryption failed');
         }
       } else if (encryptionMethod == 'PQC_3_LAYER') {
-        // Require explicit recipient public key to avoid key mismatch
         final actualRecipientPublicKey = recipientPublicKey;
         if (actualRecipientPublicKey == null || actualRecipientPublicKey.isEmpty) {
           throw Exception('Recipient public key is required for PQC');
@@ -972,11 +946,9 @@ class EmailService {
     try {
       print('[EmailService] Loading inbox for: $userEmail');
 
-      // Step 1: Load cached emails first for instant display
       final cachedEmails = await _dbHelper.getCachedInboxEmails(userEmail);
       print('[EmailService] Found ${cachedEmails.length} cached emails');
 
-      // Step 2: Fetch from backend to get current email list
       final response = await http.get(
         Uri.parse('$_baseUrl/email/inbox/$userEmail'),
         headers: {'Content-Type': 'application/json'},
@@ -996,7 +968,6 @@ class EmailService {
       final emailsJson = data['emails'] as List;
       print('[EmailService] Backend returned ${emailsJson.length} emails');
 
-      // Step 3: Process emails efficiently
       final emails = <Email>[];
       final emailsToFetch = <Map<String, dynamic>>[];
       
@@ -1004,7 +975,6 @@ class EmailService {
       for (final emailJson in emailsJson) {
         final emailId = emailJson['id'] as String;
         
-        // Check if this email is in cache and marked as cached
         final cachedEmail = cachedEmails.firstWhere(
           (cached) => cached.id == emailId,
           orElse: () => CachedInboxEmail(
@@ -1038,7 +1008,6 @@ class EmailService {
         }
       }
 
-      // Step 4: Batch fetch emails that aren't cached
       if (emailsToFetch.isNotEmpty) {
         print('[EmailService] Fetching ${emailsToFetch.length} fresh emails...');
         
@@ -1217,8 +1186,6 @@ class EmailService {
         return false; // Not in cache at all
       }
       
-      // Check if email exists in cache AND is marked as cached (isCached = 1)
-      // This prevents re-caching emails that were stored but marked as not cached (due to attachments)
       return cachedEmail.isCached;
     } catch (e) {
       print('[EmailService] Error checking if email is cached: $e');
@@ -1259,12 +1226,10 @@ class EmailService {
       print('[EmailService] ===== FETCHING SENT EMAILS WITH CACHING =====');
       print('[EmailService] User email: $userEmail');
 
-      // Step 1: Try to load from local database first (for PQC emails)
       print('[EmailService] Step 1: Loading PQC emails from local database...');
       final localPqcEmails = await _dbHelper.getAllSentPqcEmails();
       print('[EmailService] Found ${localPqcEmails.length} PQC emails in local database');
 
-      // Step 2: Fetch from backend for non-PQC emails and to get metadata
       print('[EmailService] Step 2: Fetching from backend...');
       final response = await http.get(
         Uri.parse('$_baseUrl/email/sent/$userEmail'),
