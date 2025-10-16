@@ -599,14 +599,12 @@ public class EmailController : ControllerBase
                 });
             }
 
-            // Decrypt OTP layer (outermost and only)
             _logger.LogInformation("Decrypting OTP layer for subject and body");
             string pqcSubject, pqcBody;
 
             if (TryParseEnvelope(email.Subject, out var otpSubjectEnvelope))
             {
                 pqcSubject = await DecryptOTPAsync(otpSubjectEnvelope);
-                // Check if OTP decryption failed
                 if (pqcSubject == "OTP decryption failed" || pqcSubject == "Decryption failed")
                 {
                     _logger.LogError("OTP decryption failed for subject");
@@ -626,7 +624,6 @@ public class EmailController : ControllerBase
             if (TryParseEnvelope(email.Body, out var otpBodyEnvelope))
             {
                 pqcBody = await DecryptOTPAsync(otpBodyEnvelope);
-                // Check if OTP decryption failed
                 if (pqcBody == "OTP decryption failed" || pqcBody == "Decryption failed")
                 {
                     _logger.LogError("OTP decryption failed for body");
@@ -660,7 +657,6 @@ public class EmailController : ControllerBase
 
                             if (!string.IsNullOrWhiteSpace(fileName) && !string.IsNullOrWhiteSpace(envelope))
                             {
-                                // Decrypt OTP layer to get PQC envelope
                                 if (TryParseEnvelope(envelope, out var otpEnvelope))
                                 {
                                     var pqcEnvelope = await DecryptOTPAsync(otpEnvelope);
@@ -834,12 +830,10 @@ public class EmailController : ControllerBase
                                 {
                                     _logger.LogInformation("Processing attachment {Index}: {FileName}", idx, fileName);
 
-                                    // Decrypt OTP layer first
                                     if (TryParseEnvelope(envelope, out var otpEnvelope))
                                     {
                                         var aesEnvelope = await DecryptOTPAsync(otpEnvelope);
 
-                                        // Check if OTP decryption failed
                                         if (aesEnvelope == "OTP decryption failed" || aesEnvelope == "Decryption failed")
                                         {
                                             _logger.LogWarning("OTP decryption failed for attachment {Index}: {FileName}, skipping", idx, fileName);
@@ -892,7 +886,7 @@ public class EmailController : ControllerBase
                     sentAt = email.SentAt,
                     isRead = email.IsRead,
                     encryptionMethod = email.EncryptionMethod,
-                    requiresPqcDecryption = true       // Flag for frontend
+                    requiresPqcDecryption = true
                 }
             });
         }
@@ -960,7 +954,6 @@ public class EmailController : ControllerBase
 
     private async Task<string> EncryptBodyAsync(string plaintext)
     {
-        // Call OTP encrypt API with retry logic
         return await RetryAsync(async () =>
         {
             _logger.LogInformation("Calling OTP encrypt API at {OtpUrl}/api/otp/encrypt for plaintext length {Length}", OtpBaseUrl, plaintext?.Length ?? 0);
@@ -985,8 +978,6 @@ public class EmailController : ControllerBase
         }, "OTP encryption");
     }
 
-    /// Retry helper with exponential backoff for HTTP calls to encryption services
-    /// </summary>
     private async Task<T> RetryAsync<T>(Func<Task<T>> operation, string operationName)
     {
         for (int attempt = 1; attempt <= MaxRetries; attempt++)
@@ -997,7 +988,7 @@ public class EmailController : ControllerBase
             }
             catch (HttpRequestException ex) when (attempt < MaxRetries)
             {
-                var delaySeconds = Math.Pow(2, attempt); // Exponential backoff: 2s, 4s, 8s
+                var delaySeconds = Math.Pow(2, attempt);
                 _logger.LogWarning(ex, "{Operation} failed (attempt {Attempt}/{MaxRetries}), retrying in {Delay}s...",
                     operationName, attempt, MaxRetries, delaySeconds);
                 await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
@@ -1017,15 +1008,12 @@ public class EmailController : ControllerBase
         {
             if (string.IsNullOrWhiteSpace(data)) return false;
             var trimmed = data.Trim();
-            // Check if it's a JSON string that looks like an encryption envelope
             if (trimmed.StartsWith("{") && trimmed.EndsWith("}"))
             {
                 var parsed = JsonSerializer.Deserialize<JsonElement>(trimmed);
                 
-                // Check for AES envelope format
                 if (string.Equals(method, "AES", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Pascal/camel case envelope
                     if (parsed.TryGetProperty("keyId", out var keyId) && 
                         parsed.TryGetProperty("ivHex", out var ivHex) &&
                         parsed.TryGetProperty("ciphertextHex", out var ciphertextHex) &&
@@ -1036,7 +1024,6 @@ public class EmailController : ControllerBase
                                !string.IsNullOrEmpty(ciphertextHex.GetString()) &&
                                !string.IsNullOrEmpty(tagHex.GetString());
                     }
-                    // snake_case envelope from server2.py
                     if (parsed.TryGetProperty("key_id", out var key_id) && 
                         parsed.TryGetProperty("iv_hex", out var iv_hex) &&
                         parsed.TryGetProperty("ciphertext_hex", out var ciphertext_hex) &&
@@ -1049,7 +1036,6 @@ public class EmailController : ControllerBase
                     }
                 }
                 
-                // Check for OTP envelope format
                 if ((string.Equals(method, "OTP", StringComparison.OrdinalIgnoreCase)) &&
                     parsed.TryGetProperty("otp_key_id", out var otpKeyId) && 
                     parsed.TryGetProperty("ciphertext_b64url", out var ciphertextB64))
@@ -1094,13 +1080,11 @@ public class EmailController : ControllerBase
                     return body;
                     
                 case "PQC_2_LAYER":
-                    // PQC_2_LAYER: OTP(PQC(plaintext)) - decrypt OTP first, then return PQC for frontend
                     if (TryParseEnvelope(body, out var otpEnvelope2))
                     {
                         _logger.LogInformation("Decrypting PQC_2_LAYER: OTP layer first");
                         var otpDecrypted2 = await DecryptOTPAsync(otpEnvelope2);
                         
-                        // Check if OTP decryption resulted in PQC envelope
                         if (TryParsePQCEnvelope(otpDecrypted2, out var pqcEnvelope2))
                         {
                             _logger.LogInformation("OTP decrypted to PQC envelope, returning for frontend decryption");
@@ -1129,18 +1113,16 @@ public class EmailController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to decrypt body with method {Method}, returning original", encryptionMethod);
-            return body; // fail open to avoid breaking inbox
+            return body;
         }
     }
 
     private async Task<string> TryDecryptBodyAsync(string body)
     {
-        // Try to detect encryption type and decrypt accordingly
         try
         {
             _logger.LogInformation("Attempting to decrypt body: {Body}", body);
             
-            // Check if it's AES envelope format FIRST (more specific)
             if (TryParseAESEnvelope(body, out var aesEnvelope))
             {
                 _logger.LogInformation("Detected AES envelope, decrypting with AES API");
@@ -1152,7 +1134,6 @@ public class EmailController : ControllerBase
                 _logger.LogInformation("Detected OTP envelope, decrypting with OTP API");
                 var otpDecrypted3 = await DecryptOTPAsync(otpEnvelope3);
                 
-                // After OTP decryption, check if result is PQC-encrypted
                 if (TryParsePQCEnvelope(otpDecrypted3, out var pqcEnvelope3))
                 {
                     _logger.LogInformation("OTP decrypted to PQC envelope, returning PQC data for frontend decryption");
@@ -1162,21 +1143,19 @@ public class EmailController : ControllerBase
                 return otpDecrypted3;
             }
 
-            // Check if it's PQC envelope format (direct PQC without OTP wrapper)
             if (TryParsePQCEnvelope(body, out var pqcEnvelope4))
             {
                 _logger.LogInformation("Detected direct PQC envelope, returning for frontend decryption");
                 return JsonSerializer.Serialize(pqcEnvelope4, _jsonOptions);
             }
 
-            // If none of the above, return as-is (plain text)
             _logger.LogInformation("No encryption envelope detected, returning as plain text");
             return body;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to decrypt body, returning original");
-            return body; // fail open to avoid breaking inbox
+            return body;
         }
     }
 
@@ -1235,7 +1214,6 @@ public class EmailController : ControllerBase
             _logger.LogInformation("AES envelope - TagHex length: {TagLen}", envelope.TagHex?.Length ?? 0);
             _logger.LogInformation("AES envelope - AadHex length: {AadLen}", envelope.AadHex?.Length ?? 0);
 
-            // Log first 100 chars of ciphertext for debugging
             var ctPreview = envelope.CiphertextHex?.Length > 100 ? envelope.CiphertextHex.Substring(0, 100) + "..." : envelope.CiphertextHex;
             _logger.LogInformation("AES envelope - CiphertextHex preview: {CtPreview}", ctPreview);
 
@@ -1264,7 +1242,6 @@ public class EmailController : ControllerBase
                 var responseContent = await response.Content.ReadAsStringAsync();
                 _logger.LogInformation("AES decrypt raw response: {Response}", responseContent);
                 
-                // Try to parse as JSON first (in case it's wrapped)
                 try
                 {
                     var jsonDoc = JsonDocument.Parse(responseContent);
@@ -1277,10 +1254,8 @@ public class EmailController : ControllerBase
                 }
                 catch (JsonException)
                 {
-                    // Not JSON, treat as raw text
                 }
                 
-                // If not JSON or no plaintext property, return the raw content
                 _logger.LogInformation("AES decryption successful, returning raw content length: {Length}", responseContent?.Length ?? 0);
                 _logger.LogInformation("=== AES DECRYPT END (SUCCESS) ===");
                 return responseContent;
@@ -1295,7 +1270,6 @@ public class EmailController : ControllerBase
         }
         catch (InvalidOperationException)
         {
-            // Re-throw our own exceptions
             throw;
         }
         catch (Exception ex)
@@ -1331,7 +1305,6 @@ public class EmailController : ControllerBase
         {
             _logger.LogInformation($"TryParseAESEnvelope: Attempting to parse body: {body}");
             
-            // First try to parse as camelCase (new format)
             var parsed = JsonSerializer.Deserialize<AESEnvelope>(body, _jsonOptions);
             if (parsed != null && !string.IsNullOrWhiteSpace(parsed.KeyId) && !string.IsNullOrWhiteSpace(parsed.CiphertextHex))
             {
@@ -1340,7 +1313,6 @@ public class EmailController : ControllerBase
                 return true;
             }
             
-            // If camelCase failed, try to parse as snake_case (old format) and convert
             var jsonDoc = JsonDocument.Parse(body);
             var root = jsonDoc.RootElement;
             
@@ -1362,14 +1334,12 @@ public class EmailController : ControllerBase
                 return false;
             }
             
-            // Additional check: ensure it has AES-specific fields that OTP doesn't have
             if (string.IsNullOrWhiteSpace(ivHex) || string.IsNullOrWhiteSpace(tagHex))
             {
                 _logger.LogInformation("TryParseAESEnvelope: IvHex or TagHex is empty");
                 return false;
             }
             
-            // Create envelope with converted format
             envelope = new AESEnvelope
             {
                 KeyId = keyId,
@@ -1385,7 +1355,6 @@ public class EmailController : ControllerBase
         }
         catch (Exception ex)
         {
-            // Log the exception for debugging
             _logger.LogError(ex, $"TryParseAESEnvelope failed: {ex.Message}, body: {body}");
             return false;
         }
@@ -1431,7 +1400,6 @@ public class EmailController : ControllerBase
             var result = new List<object>(list.Count);
             foreach (var item in list)
             {
-                // Try camelCase first (encrypted format)
                 var fileName = item.ContainsKey("fileName") ? item["fileName"]?.ToString() :
                               (item.ContainsKey("FileName") ? item["FileName"]?.ToString() : null);
                 var contentType = item.ContainsKey("contentType") ? item["contentType"]?.ToString() :
@@ -1443,7 +1411,6 @@ public class EmailController : ControllerBase
                     continue;
                 }
 
-                // Check if attachment has encrypted envelope or plain base64
                 var envelope = item.ContainsKey("envelope") ? item["envelope"]?.ToString() : null;
                 var plainBase64 = item.ContainsKey("contentBase64") ? item["contentBase64"]?.ToString() :
                                  (item.ContainsKey("ContentBase64") ? item["ContentBase64"]?.ToString() : null);
@@ -1451,13 +1418,11 @@ public class EmailController : ControllerBase
                 string contentBase64;
                 if (!string.IsNullOrWhiteSpace(envelope))
                 {
-                    // Encrypted attachment - decrypt it
                     _logger.LogInformation("Decrypting attachment: {FileName}", fileName);
                     contentBase64 = await TryDecryptBodyAsync(envelope);
                 }
                 else if (!string.IsNullOrWhiteSpace(plainBase64))
                 {
-                    // Plain attachment (happens when frontend pre-encrypts subject/body)
                     _logger.LogWarning("Found plain (unencrypted) attachment: {FileName}", fileName);
                     contentBase64 = plainBase64;
                 }
@@ -1481,7 +1446,6 @@ public class EmailController : ControllerBase
     {
         try
         {
-            // Resolve auth secret: prefer stored encrypted app password for SENDER
             var sender = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.SenderEmail);
             string? smtpPassword = null;
             string? senderExternalEmail = null;
@@ -1490,32 +1454,27 @@ public class EmailController : ControllerBase
                 try { smtpPassword = QuMail.EmailProtocol.Services.SecretProtector.Decrypt(sender.AppPasswordHash); } catch { smtpPassword = null; }
                 senderExternalEmail = sender.ExternalEmail;
             }
-            if (string.IsNullOrWhiteSpace(smtpPassword) || string.IsNullOrWhiteSpace(senderExternalEmail)) return; // cannot send externally without credentials
-            // Gmail/Yahoo app passwords are 16 chars without spaces; strip any spaces before use
+            if (string.IsNullOrWhiteSpace(smtpPassword) || string.IsNullOrWhiteSpace(senderExternalEmail)) return;
             smtpPassword = smtpPassword!.Replace(" ", string.Empty);
 
-            // Determine provider based on SENDER settings (not recipient)
             var providerKey = !string.IsNullOrWhiteSpace(sender?.EmailProvider) ? sender!.EmailProvider! : "gmail";
             if (!EmailProviderDefaults.DefaultProviders.TryGetValue(providerKey, out var provider))
             {
-                provider = EmailProviderDefaults.DefaultProviders["gmail"]; // fallback
+                provider = EmailProviderDefaults.DefaultProviders["gmail"];
             }
             var smtp = provider.Smtp;
 
-            // Resolve external recipient address
             var externalRecipient = !string.IsNullOrWhiteSpace(recipient.ExternalEmail) ? recipient.ExternalEmail! : recipient.Email;
 
-            // Build external message: keep body as encrypted envelope JSON to avoid leaking plaintext
             var mail = new MailMessage
             {
-                From = new MailAddress(senderExternalEmail), // Use sender's external email
+                From = new MailAddress(senderExternalEmail),
                 Subject = subjectEnvelope,
                 Body = bodyEnvelope,
                 IsBodyHtml = false
             };
             mail.To.Add(new MailAddress(externalRecipient));
 
-            // Try STARTTLS 587 first, then implicit SSL 465 as fallback (some providers require 465)
             async Task<bool> TrySendAsync(string host, int port, bool enableSsl)
             {
                 using var client = new SmtpClient(host, port)
@@ -1541,13 +1500,11 @@ public class EmailController : ControllerBase
             var sent = await TrySendAsync(smtp.Host, smtp.Port, smtp.EnableSsl);
             if (!sent && smtp.Host.Contains("gmail"))
             {
-                // Gmail fallback to implicit SSL 465
                 await TrySendAsync(smtp.Host, 465, true);
             }
         }
         catch
         {
-            // Fail quietly for external delivery so app send succeeds
         }
     }
     [HttpPost("validate-user")]
@@ -1620,7 +1577,6 @@ public class EmailController : ControllerBase
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            // ContentBase64 is already base64, use directly!
             var envelope = await EncryptBodyAsync(a.ContentBase64);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
@@ -1634,7 +1590,6 @@ public class EmailController : ControllerBase
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            // ContentBase64 is already base64, use directly!
             var envelope = await EncryptSingleWithPQC2LayerAsync(a.ContentBase64, recipientPublicKey);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
@@ -1648,7 +1603,6 @@ public class EmailController : ControllerBase
         var encrypted = new List<object>(attachments.Count);
         foreach (var a in attachments)
         {
-            // ContentBase64 is already base64, use directly!
             var envelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
             encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
         }
@@ -1659,18 +1613,15 @@ public class EmailController : ControllerBase
     {
         _logger.LogInformation("Encrypting with AES-GCM via server2.py");
 
-        // Encrypt subject and body with AES
         var subjectEnvelope = await EncryptWithAESGCMAsync(subject);
         var bodyEnvelope = await EncryptWithAESGCMAsync(body);
 
-        // Encrypt attachments
         string? attachmentsJson = null;
         if (attachments != null && attachments.Count > 0)
         {
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                // ContentBase64 is already base64, use directly!
                 var envelope = await EncryptWithAESGCMAsync(a.ContentBase64);
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
             }
@@ -1684,18 +1635,15 @@ public class EmailController : ControllerBase
     {
         _logger.LogInformation("Encrypting with PQC 2-layer (Kyber-512 + OTP)");
         
-        // Encrypt subject and body with PQC 2-layer
         var subjectEnvelope = await EncryptSingleWithPQC2LayerAsync(subject, recipientPublicKey);
         var bodyEnvelope = await EncryptSingleWithPQC2LayerAsync(body, recipientPublicKey);
         
-        // Encrypt attachments
         string? attachmentsJson = null;
         if (attachments != null && attachments.Count > 0)
         {
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                // ContentBase64 is already base64, use directly!
                 var envelope = await EncryptSingleWithPQC2LayerAsync(a.ContentBase64, recipientPublicKey);
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope });
             }
@@ -1709,27 +1657,22 @@ public class EmailController : ControllerBase
     {
         _logger.LogInformation("Encrypting with PQC 3-layer (Kyber-1024 + AES-256 + OTP)");
 
-        // PHASE 1: Encrypt with PQC (Kyber-1024)
         _logger.LogInformation("Phase 1: PQC encryption");
         var pqcSubject = await EncryptSingleWithPQC3LayerAsync(subject, recipientPublicKey);
         var pqcBody = await EncryptSingleWithPQC3LayerAsync(body, recipientPublicKey);
 
-        // PHASE 2: Prepare PQC JSON envelopes for AES encryption (base64 encode to preserve structure)
         _logger.LogInformation("Phase 2: Preparing PQC envelopes for AES encryption");
         var pqcSubjectForAES = PreparePqcEnvelopeForAES(pqcSubject);
         var pqcBodyForAES = PreparePqcEnvelopeForAES(pqcBody);
 
-        // PHASE 3: Apply AES encryption to prepared PQC data
         _logger.LogInformation("Phase 3: AES encryption");
         var aesSubject = await EncryptWithAESGCMAsync(pqcSubjectForAES);
         var aesBody = await EncryptWithAESGCMAsync(pqcBodyForAES);
 
-        // PHASE 4: Apply OTP encryption to AES-encrypted data
         _logger.LogInformation("Phase 4: OTP encryption");
         var finalSubject = await EncryptBodyAsync(aesSubject);
         var finalBody = await EncryptBodyAsync(aesBody);
 
-        // Encrypt attachments with all 3 layers
         string? attachmentsJson = null;
         if (attachments != null && attachments.Count > 0)
         {
@@ -1737,17 +1680,12 @@ public class EmailController : ControllerBase
             var encrypted = new List<object>(attachments.Count);
             foreach (var a in attachments)
             {
-                // Phase 1: PQC encryption (ContentBase64 is already base64, use directly!)
                 var pqcEnvelope = await EncryptSingleWithPQC3LayerAsync(a.ContentBase64, recipientPublicKey);
 
-                // Phase 2: For attachments, use PQC envelope directly (no base64 encoding needed)
-                // Attachments are already base64, so we don't need to base64 encode the JSON envelope
                 var pqcEnvelopeForAES = pqcEnvelope;
 
-                // Phase 3: AES encryption
                 var aesEnvelope = await EncryptWithAESGCMAsync(pqcEnvelopeForAES);
 
-                // Phase 4: OTP encryption
                 var finalEnvelope = await EncryptBodyAsync(aesEnvelope);
 
                 encrypted.Add(new { fileName = a.FileName, contentType = a.ContentType, envelope = finalEnvelope });
@@ -1758,21 +1696,18 @@ public class EmailController : ControllerBase
         return new EncryptionResult { SubjectEnvelope = finalSubject, BodyEnvelope = finalBody, AttachmentsJson = attachmentsJson };
     }
 
-    /// <returns>Base64 encoded PQC JSON envelope for AES encryption</returns>
     private string PreparePqcEnvelopeForAES(string pqcJsonEnvelope)
     {
         try
         {
             _logger.LogInformation("Preparing PQC JSON envelope for AES encryption");
             
-            // Validate that the input is a valid JSON envelope
             if (string.IsNullOrWhiteSpace(pqcJsonEnvelope))
             {
                 _logger.LogWarning("Empty PQC envelope provided, returning as-is");
                 return pqcJsonEnvelope;
             }
             
-            // Quick validation - check if it's valid JSON
             using var testDoc = JsonDocument.Parse(pqcJsonEnvelope);
             if (!testDoc.RootElement.TryGetProperty("encryptedBody", out _))
             {
@@ -1792,29 +1727,25 @@ public class EmailController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to prepare PQC envelope for AES, using original");
-            return pqcJsonEnvelope; // Fallback to original if conversion fails
+            return pqcJsonEnvelope;
         }
     }
 
-    /// <returns>Original PQC JSON envelope</returns>
     private string RestorePqcEnvelopeFromAES(string aesDecryptedResult)
     {
         try
         {
             _logger.LogInformation("Restoring PQC JSON envelope from AES decryption result");
             
-            // Validate input
             if (string.IsNullOrWhiteSpace(aesDecryptedResult))
             {
                 _logger.LogWarning("Empty AES decryption result provided, returning as-is");
                 return aesDecryptedResult;
             }
             
-            // Convert base64 back to JSON envelope
             var jsonBytes = Convert.FromBase64String(aesDecryptedResult);
             var originalJsonEnvelope = System.Text.Encoding.UTF8.GetString(jsonBytes);
             
-            // Validate that the result is valid JSON with expected structure
             using var testDoc = JsonDocument.Parse(originalJsonEnvelope);
             if (!testDoc.RootElement.TryGetProperty("encryptedBody", out _))
             {
@@ -1872,7 +1803,6 @@ public class EmailController : ControllerBase
             _logger.LogInformation("AES encryption successful - KeyId: {KeyId}, IvHex: {IvHex}, CiphertextHex: {CiphertextHex}, TagHex: {TagHex}",
                 result.KeyId, result.IvHex, result.CiphertextHex, result.TagHex);
 
-            // Store AES envelope in proper format for decryption
             var envelope = new AESEnvelope
             {
                 KeyId = result.KeyId,
@@ -1894,15 +1824,13 @@ public class EmailController : ControllerBase
     {
         try
         {
-            // Use the injected PQC service directly
             var encrypted = _pqcEmailService.EncryptEmail(plaintext, recipientPublicKey);
             
-            // Store PQC envelope
             var envelope = new
             {
                 encryptedBody = encrypted.EncryptedBody,
                 pqcCiphertext = encrypted.PQCCiphertext,
-                encryptedKeyId = encrypted.EncryptedKeyId, // REQUIRED for proper decryption
+                encryptedKeyId = encrypted.EncryptedKeyId,
                 algorithm = encrypted.Algorithm,
                 keyId = encrypted.KeyId,
                 securityLevel = "Kyber512",
@@ -1922,19 +1850,16 @@ public class EmailController : ControllerBase
     {
         try
         {
-            // Use the injected enhanced PQC service directly
             var encrypted = _hybridEncryption.Encrypt(
                 plaintext, 
                 recipientPublicKey, 
                 Level3EnhancedPQC.SecurityLevel.Kyber512, 
                 useAES: true);
-            
-            // Store PQC envelope
             var envelope = new
             {
                 encryptedBody = encrypted.EncryptedBody,
                 pqcCiphertext = encrypted.PQCCiphertext,
-                encryptedKeyId = encrypted.EncryptedKeyId, // REQUIRED for proper decryption
+                encryptedKeyId = encrypted.EncryptedKeyId, 
                 algorithm = encrypted.Algorithm,
                 keyId = encrypted.KeyId,
                 securityLevel = encrypted.SecurityLevel,
@@ -1965,7 +1890,7 @@ public class SendAttachment
 {
     public string FileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = "application/octet-stream";
-    public string ContentBase64 { get; set; } = string.Empty; // raw content, base64
+    public string ContentBase64 { get; set; } = string.Empty; 
 }
 
 public class ValidateUserRequest
